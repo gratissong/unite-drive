@@ -49,7 +49,7 @@ The installed app can check GitHub Releases for a newer version and install it i
 
 - Shortly after launch, and periodically while the app runs, Unite Drive checks for a newer release, downloads it, and installs it the next time you quit. **Settings → Updates** shows the installed version and current status, offers **Check for updates**, and shows **Restart to update** once a download finishes. **Automatically check for updates** can be turned off; a manual check is still available from Settings and the tray menu.
 - The update feed is read anonymously, so the repository (or at least its releases) must be **public**.
-- Publish a release with `npm run release:win` (set `GH_TOKEN` to a token with `repo` scope). electron-builder uploads the installer, `latest.yml`, and the blockmap to a GitHub Release tagged `v<version>`. Bump `version` in `package.json` first — the tag is derived from it.
+- To publish a release, bump `version` in `package.json`, merge that to `main`, then push a matching tag — for example `git tag v1.0.1; git push origin v1.0.1`. The **Release** workflow builds the installer and attaches it, `latest.yml`, and the blockmap to a GitHub Release tagged `v<version>`. The tag must match `version`. You can also publish from your machine with `npm run release:win` (set `GH_TOKEN` to a token with `repo` scope) as a fallback.
 - Windows installers are not code signed. electron-updater checks a downloaded installer against `publisherName` only when signing is configured, so unsigned builds still update, but Windows shows a SmartScreen warning on install. Only the installed NSIS build can self-update; the portable executable cannot.
 
 ## Current limitations
