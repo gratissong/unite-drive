@@ -1,0 +1,46 @@
+name: Release
+
+# Publishing a release is a tag push: bump the version in package.json, commit
+# it to main, then push a matching tag (for example v1.0.1). This workflow builds
+# the Windows installer and uploads it plus latest.yml and the blockmap to a
+# GitHub Release, which is what the in-app updater reads.
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Required to create the release and upload its assets with the built-in token.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history and tags so electron-builder can resolve the release.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Verify the tag matches package.json
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ("v$version" -ne '${{ github.ref_name }}') {
+            throw "Tag '${{ github.ref_name }}' does not match package.json version 'v$version'. Bump the version before tagging."
+          }
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+
+      - name: Build and publish to GitHub Releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run release:win
