@@ -386,3 +386,100 @@ test('incremental idle sync propagates a local deletion without re-listing', asy
     assert.equal(store.getFile('a.txt').sync_state, 'tombstone')
   })
 })
+
+test('treats a local file move as a rename without re-uploading or trashing', async () => {
+  const provider = drive('drive-a')
+  await withEngine({ localFiles: { 'docs/notes.txt': 'content' }, providers: [provider] }, async ({ rootPath, engine, store }) => {
+    await engine.syncOnce()
+    const original = (await provider.listManagedFiles(provider.rootFolderId))[0]
+
+    await fs.promises.mkdir(path.join(rootPath, 'archive'))
+    await fs.promises.rename(path.join(rootPath, 'docs', 'notes.txt'), path.join(rootPath, 'archive', 'notes-moved.txt'))
+
+    const result = await engine.syncOnce()
+
+    assert.equal(result.completed, 1)
+    assert.equal(result.failed, 0)
+    assert.equal(result.retrying, 0)
+
+    // One Drive file remains, carrying the original Drive file id forward.
+    const remote = await provider.listManagedFiles(provider.rootFolderId)
+    assert.equal(remote.length, 1)
+    assert.equal(remote[0].driveFileId, original.driveFileId)
+    assert.equal(remote[0].relativePath, 'archive/notes-moved.txt')
+
+    const moved = store.getFile('archive/notes-moved.txt')
+    assert.equal(moved.drive_file_id, original.driveFileId)
+    assert.equal(moved.sync_state, 'active')
+    assert.match(store.getFile('docs/notes.txt')?.sync_state, /forgotten/)
+
+    // Idempotent: a follow-up sync queues nothing new.
+    assert.equal((await engine.syncOnce()).actionsQueued, 0)
+  })
+})
+
+test('renames every file when a whole local folder is moved, preserving Drive ids', async () => {
+  const provider = drive('drive-a')
+  await withEngine({
+    localFiles: { 'photos/a.txt': 'content-a', 'photos/b.txt': 'content-b' },
+    providers: [provider],
+  }, async ({ rootPath, engine, store }) => {
+    await engine.syncOnce()
+    const before = new Map((await provider.listManagedFiles(provider.rootFolderId)).map((file) => [file.relativePath, file.driveFileId]))
+
+    await fs.promises.rename(path.join(rootPath, 'photos'), path.join(rootPath, 'album'))
+    const result = await engine.syncOnce()
+
+    assert.equal(result.failed, 0)
+    assert.equal(store.getFile('album/a.txt').drive_file_id, before.get('photos/a.txt'))
+    assert.equal(store.getFile('album/b.txt').drive_file_id, before.get('photos/b.txt'))
+    assert.match(store.getFile('photos/a.txt')?.sync_state, /forgotten/)
+    assert.match(store.getFile('photos/b.txt')?.sync_state, /forgotten/)
+    assert.equal((await provider.listManagedFiles(provider.rootFolderId)).length, 2)
+    assert.equal((await engine.syncOnce()).actionsQueued, 0)
+  })
+})
+
+test('does not treat an ambiguous identical copy as a rename', async () => {
+  const provider = drive('drive-a')
+  await withEngine({ localFiles: { 'keep.txt': 'same' }, providers: [provider] }, async ({ rootPath, engine, store }) => {
+    await engine.syncOnce()
+    const original = (await provider.listManagedFiles(provider.rootFolderId))[0]
+
+    // Copy keep.txt to two places and remove the original: the match is ambiguous,
+    // so the deletion must propagate and both copies upload as new Drive files.
+    await fs.promises.writeFile(path.join(rootPath, 'a.txt'), 'same')
+    await fs.promises.writeFile(path.join(rootPath, 'b.txt'), 'same')
+    await fs.promises.unlink(path.join(rootPath, 'keep.txt'))
+
+    const result = await engine.syncOnce()
+    assert.equal(result.failed, 0)
+
+    const remote = await provider.listManagedFiles(provider.rootFolderId)
+    assert.equal(remote.length, 2)
+    const ids = new Set(remote.map((file) => file.driveFileId))
+    assert.ok(!ids.has(original.driveFileId))
+    assert.match(store.getFile('keep.txt')?.sync_state, /tombstone/)
+  })
+})
+
+test('re-uploads when a file is moved and edited at the same time', async () => {
+  const provider = drive('drive-a')
+  await withEngine({ localFiles: { 'file.txt': 'v1' }, providers: [provider] }, async ({ rootPath, engine, store }) => {
+    await engine.syncOnce()
+    const original = (await provider.listManagedFiles(provider.rootFolderId))[0]
+
+    await fs.promises.writeFile(path.join(rootPath, 'renamed.txt'), 'v2')
+    await fs.promises.unlink(path.join(rootPath, 'file.txt'))
+
+    await engine.syncOnce()
+
+    // Content changed, so it is a new upload (new id); the old copy is trashed.
+    const remote = await provider.listManagedFiles(provider.rootFolderId)
+    assert.equal(remote.length, 1)
+    assert.equal(remote[0].relativePath, 'renamed.txt')
+    assert.notEqual(remote[0].driveFileId, original.driveFileId)
+    assert.match(store.getFile('file.txt')?.sync_state, /tombstone/)
+    assert.equal(await fs.promises.readFile(path.join(rootPath, 'renamed.txt'), 'utf8'), 'v2')
+  })
+})

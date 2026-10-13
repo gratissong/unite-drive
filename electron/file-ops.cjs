@@ -146,4 +146,14 @@ async function moveLocalFileToTrash(rootPath, relativePath, trashItem) {
   return true
 }
 
-module.exports = { hashFile, moveLocalFileToTrash, resolveSafePath, scanSyncRoot, snapshotFile, writeStreamAtomically, writeStreamIfAbsent }
+// Like moveLocalFileToTrash but also accepts a directory (for the file explorer's
+// delete-to-trash flow). Symlinks remain rejected by assertNoSymlinkPath.
+async function moveLocalPathToTrash(rootPath, relativePath, trashItem) {
+  if (typeof trashItem !== 'function') throw new TypeError('A system trash handler is required')
+  const { root, target, relativePath: normalized } = resolveSafePath(rootPath, relativePath)
+  await assertNoSymlinkPath(root, normalized)
+  await trashItem(target)
+  return true
+}
+
+module.exports = { assertNoSymlinkPath, hashFile, ignoredNames, moveLocalFileToTrash, moveLocalPathToTrash, resolveSafePath, scanSyncRoot, snapshotFile, writeStreamAtomically, writeStreamIfAbsent }

@@ -1,5 +1,15 @@
+import { readFileSync } from 'node:fs'
+
 import react from '@vitejs/plugin-react'
 import { defineConfig, type Plugin } from 'vite'
+
+// The single source of truth for the app version is package.json, which is also
+// what electron-builder stamps into the installer. Exposing it as a VITE_ env
+// entry keeps the renderer's version in lockstep with the build: Vite picks up
+// VITE_-prefixed process.env entries when it resolves the environment, in both
+// dev and build. (A plain `define` is only substituted during `vite build`.)
+const { version } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string }
+process.env.VITE_APP_VERSION = version
 
 // Locked-down policy for the packaged app. The renderer only loads its own
 // bundled assets and talks to the main process over IPC, so no remote origins

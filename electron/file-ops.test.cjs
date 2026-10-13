@@ -4,7 +4,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { Readable } = require('node:stream')
-const { moveLocalFileToTrash, resolveSafePath, scanSyncRoot, snapshotFile, writeStreamAtomically, writeStreamIfAbsent } = require('./file-ops.cjs')
+const { moveLocalFileToTrash, moveLocalPathToTrash, resolveSafePath, scanSyncRoot, snapshotFile, writeStreamAtomically, writeStreamIfAbsent } = require('./file-ops.cjs')
 
 async function withRoot(run) {
   const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'unite-drive-files-'))
@@ -76,5 +76,31 @@ test('delegates local deletions to the recoverable system trash', async () => {
     assert.equal(moved, true)
     assert.equal(trashedPath, filePath)
     assert.equal(await fs.promises.readFile(`${filePath}.trashed`, 'utf8'), 'recoverable')
+  })
+})
+
+test('moves a whole directory to the recoverable system trash', async () => {
+  await withRoot(async (root) => {
+    const directoryPath = path.join(root, 'old-folder')
+    await fs.promises.mkdir(path.join(directoryPath, 'nested'), { recursive: true })
+    await fs.promises.writeFile(path.join(directoryPath, 'nested', 'a.txt'), 'nested content')
+    await fs.promises.writeFile(path.join(directoryPath, 'b.txt'), 'root content')
+    let trashedPath
+    const moved = await moveLocalPathToTrash(root, 'old-folder', async (target) => {
+      trashedPath = target
+      await fs.promises.rename(target, `${target}.trashed`)
+    })
+    assert.equal(moved, true)
+    assert.equal(trashedPath, directoryPath)
+    assert.equal(fs.existsSync(directoryPath), false)
+    assert.equal(await fs.promises.readFile(`${directoryPath}.trashed/nested/a.txt`, 'utf8'), 'nested content')
+  })
+})
+
+test('refuses to trash a directory containing a path that escapes the root', async () => {
+  await withRoot(async (root) => {
+    const directoryPath = path.join(root, 'dir')
+    await fs.promises.mkdir(directoryPath)
+    await assert.rejects(moveLocalPathToTrash(root, '../outside', async () => {}), /inside the sync root/)
   })
 })

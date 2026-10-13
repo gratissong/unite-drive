@@ -14,7 +14,8 @@ const { parseDesktopOAuthCredentials } = require('./google-oauth-config.cjs')
 const { GoogleDriveProvider } = require('./google-drive-provider.cjs')
 const { SyncEngine } = require('./sync-engine.cjs')
 const { SyncService } = require('./sync-service.cjs')
-const { writeStreamIfAbsent } = require('./file-ops.cjs')
+const { resolveSafePath, writeStreamIfAbsent } = require('./file-ops.cjs')
+const { createFolder, listDirectory, movePath, movePaths, searchLocalFolder, trashPath, trashPaths } = require('./explorer-ops.cjs')
 const { scanSimilarGroups } = require('./similar-scanner.cjs')
 
 const oauthCredentialKey = '__google_oauth_desktop_client__'
@@ -264,7 +265,124 @@ ipcMain.handle('unite-drive:add-files', async () => {
     }
   }
 
-  if (imported.length && syncService) await syncService.syncNow({ retryFailed: true })
+  if (imported.length) triggerSync()
+  return { imported: imported.length, skipped, errors }
+})
+
+function requireSyncFolder() {
+  const settings = settingsStore.load()
+  if (!settings.folderPath) {
+    const error = new Error('Choose a local sync folder before browsing or editing it.')
+    error.code = 'SYNC_NOT_CONFIGURED'
+    throw error
+  }
+  return settings.folderPath
+}
+
+// Kick a sync after a local mutation without letting a sync failure fail the
+// mutation itself. The file change already happened on disk, and a sync pass
+// (possibly one already in flight for that same change) reports its own error
+// through the sync-status channel, so it must not reject the caller.
+function triggerSync() {
+  if (!syncService) return
+  void syncService.syncNow({ retryFailed: true }).catch(() => {})
+}
+
+ipcMain.handle('unite-drive:list-directory', async (_event, relativePath = '') => {
+  const rootPath = requireSyncFolder()
+  const items = await listDirectory(rootPath, relativePath)
+  return items.map((entry) => {
+    if (entry.isDirectory) return { name: entry.name, isDirectory: true, size: null, mtime: entry.mtime, accountEmail: null, syncState: null }
+    const manifest = syncStore.getFile(entry.relativePath)
+    const account = manifest?.account_id ? syncStore.getAccount(manifest.account_id) : null
+    return {
+      name: entry.name,
+      isDirectory: false,
+      size: entry.size,
+      mtime: entry.mtime,
+      accountEmail: account?.email ?? null,
+      syncState: manifest?.sync_state ?? null,
+    }
+  })
+})
+
+ipcMain.handle('unite-drive:search-folder', async (_event, query = '') => {
+  const rootPath = requireSyncFolder()
+  const items = await searchLocalFolder(rootPath, query)
+  return items.map((entry) => {
+    if (entry.isDirectory) return { ...entry, accountEmail: null, syncState: null }
+    const manifest = syncStore.getFile(entry.relativePath)
+    const account = manifest?.account_id ? syncStore.getAccount(manifest.account_id) : null
+    return { ...entry, accountEmail: account?.email ?? null, syncState: manifest?.sync_state ?? null }
+  })
+})
+
+ipcMain.handle('unite-drive:create-folder', async (_event, relativePath) => createFolder(requireSyncFolder(), relativePath))
+
+ipcMain.handle('unite-drive:move-path', async (_event, from, to) => {
+  const result = await movePath(requireSyncFolder(), from, to)
+  if (!result.alreadyMoved) triggerSync()
+  return result
+})
+
+ipcMain.handle('unite-drive:trash-path', async (_event, relativePath) => {
+  const result = await trashPath(requireSyncFolder(), relativePath, (filePath) => shell.trashItem(filePath))
+  triggerSync()
+  return result
+})
+
+ipcMain.handle('unite-drive:move-paths', async (_event, moves) => {
+  const result = await movePaths(requireSyncFolder(), moves)
+  if (result.moved.length) triggerSync()
+  return result
+})
+
+ipcMain.handle('unite-drive:trash-paths', async (_event, paths) => {
+  const result = await trashPaths(requireSyncFolder(), paths, (filePath) => shell.trashItem(filePath))
+  if (result.trashed.length) triggerSync()
+  return result
+})
+
+ipcMain.handle('unite-drive:reveal-in-explorer', async (_event, relativePath = '') => {
+  const rootPath = requireSyncFolder()
+  const target = relativePath ? resolveSafePath(rootPath, relativePath).target : rootPath
+  const failure = await shell.showItemInFolder(target)
+  if (failure) {
+    const error = new Error(failure)
+    error.code = 'OPEN_FOLDER_FAILED'
+    throw error
+  }
+  return true
+})
+
+ipcMain.handle('unite-drive:import-into-folder', async (_event, relativePath = '') => {
+  const rootPath = requireSyncFolder()
+  const targetDir = typeof relativePath === 'string' && relativePath
+    ? resolveSafePath(rootPath, relativePath).relativePath
+    : ''
+  const folderLabel = targetDir ? path.basename(targetDir) : 'this folder'
+  const selection = await dialog.showOpenDialog(mainWindow, {
+    title: `Add files to ${folderLabel}`,
+    properties: ['openFile', 'multiSelections'],
+  })
+  if (selection.canceled) return { imported: 0, skipped: 0, errors: [] }
+  const imported = []
+  const skipped = []
+  const errors = []
+  for (const sourcePath of selection.filePaths) {
+    try {
+      const stats = await fs.promises.lstat(sourcePath)
+      if (!stats.isFile() || stats.isSymbolicLink()) throw new TypeError('Only regular files can be added')
+      const name = path.basename(sourcePath)
+      const relativeFile = targetDir ? `${targetDir}/${name}` : name
+      await writeStreamIfAbsent(rootPath, relativeFile, fs.createReadStream(sourcePath))
+      imported.push(name)
+    } catch (error) {
+      if (error.code === 'DESTINATION_EXISTS') skipped.push(path.basename(sourcePath))
+      else errors.push({ name: path.basename(sourcePath), message: error.message })
+    }
+  }
+  if (imported.length) triggerSync()
   return { imported: imported.length, skipped, errors }
 })
 

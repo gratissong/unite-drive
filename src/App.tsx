@@ -40,6 +40,7 @@ import DedupeReport from './DedupeReport'
 import { buildDuplicateGroups, type DuplicateGroup } from './dedup'
 import SimilarReport from './SimilarReport'
 import { demoSimilarGroups, mapSimilarGroups, type SimilarGroup } from './similar'
+import ExplorerTab from './ExplorerTab'
 
 type ConflictPolicy = 'keep-both' | 'prefer-local' | 'prefer-remote'
 type DeletionPolicy = 'propagate-to-trash' | 'keep-other-copy'
@@ -65,6 +66,17 @@ type RoutedFile = {
   preview?: boolean
 }
 
+type FolderSearchEntry = {
+  name: string
+  isDirectory: boolean
+  size: number | null
+  mtime: string | null
+  accountEmail?: string | null
+  syncState?: string | null
+  relativePath: string
+  parentPath: string
+}
+
 type SyncOperation = {
   id: string
   kind: string
@@ -79,7 +91,7 @@ type SyncOperation = {
   updated_at: string
 }
 
-type Page = 'Overview' | 'Files' | 'Transfers' | 'Storage' | 'Accounts' | 'Settings'
+type Page = 'Overview' | 'Files' | 'Explorer' | 'Transfers' | 'Storage' | 'Accounts' | 'Settings'
 
 type NotificationKind = 'info' | 'success' | 'warning' | 'error'
 
@@ -144,6 +156,7 @@ const demoDuplicateGroups: DuplicateGroup[] = [
 const navigation: { label: Page; icon: typeof LayoutDashboard }[] = [
   { label: 'Overview', icon: LayoutDashboard },
   { label: 'Files', icon: File },
+  { label: 'Explorer', icon: FolderOpen },
   { label: 'Transfers', icon: Activity },
   { label: 'Storage', icon: HardDrive },
   { label: 'Accounts', icon: Users },
@@ -255,6 +268,10 @@ function App() {
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchActive, setSearchActive] = useState(0)
   const [search, setSearch] = useState('')
+  const [searchScope, setSearchScope] = useState<'drives' | 'folder'>('drives')
+  const [paletteQuery, setPaletteQuery] = useState('')
+  const [folderSearch, setFolderSearch] = useState<{ query: string; state: 'idle' | 'loading' | 'error'; items: FolderSearchEntry[] }>({ query: '', state: 'idle', items: [] })
+  const [explorerFocus, setExplorerFocus] = useState<{ path: string; nonce: number } | null>(null)
   const [filterOpen, setFilterOpen] = useState(false)
   const [filterDrive, setFilterDrive] = useState('all')
   const [filterType, setFilterType] = useState<'all' | 'image' | 'archive' | 'document' | 'other'>('all')
@@ -286,6 +303,8 @@ function App() {
     setNotifications((current) => [{ id, kind, title: title ?? defaultNotifTitle[kind], message, time: new Date(), read: false, action }, ...current].slice(0, 100))
     setToast(message)
   }, [])
+
+  const notifyInfo = useCallback((message: string) => notify('info', message), [notify])
 
   function markAllNotificationsRead() {
     setNotifications((current) => current.map((item) => ({ ...item, read: true })))
@@ -323,6 +342,29 @@ function App() {
     window.addEventListener('keydown', handleGlobalKeyDown)
     return () => window.removeEventListener('keydown', handleGlobalKeyDown)
   }, [])
+
+  // Debounced search of the local sync folder when the palette is in "This folder" mode.
+  useEffect(() => {
+    if (!searchOpen || searchScope !== 'folder') return
+    const bridge = window.uniteDrive
+    const query = paletteQuery.trim()
+    if (!bridge || !query) return
+    let active = true
+    const timer = window.setTimeout(() => {
+      setFolderSearch({ query, state: 'loading', items: [] })
+      bridge.searchFolder(query).then((list) => {
+        if (!active) return
+        setFolderSearch({ query, state: 'idle', items: list })
+      }).catch(() => {
+        if (!active) return
+        setFolderSearch({ query, state: 'error', items: [] })
+      })
+    }, 180)
+    return () => {
+      active = false
+      window.clearTimeout(timer)
+    }
+  }, [searchOpen, searchScope, paletteQuery])
 
   useEffect(() => {
     if (!window.uniteDrive || page !== 'Transfers') return
@@ -475,6 +517,7 @@ function App() {
   const pageCopy: Record<Page, string> = {
     Overview: 'Your cloud, in one place.',
     Files: 'Find where everything lives.',
+    Explorer: 'Browse and manage your local sync folder.',
     Transfers: 'A clear view of every move.',
     Storage: 'Reclaim space from duplicate files.',
     Accounts: 'Your connected storage accounts.',
@@ -838,23 +881,59 @@ function App() {
     : syncEnabled ? 'Watching your local folder for changes.'
     : 'Turn on sync in Settings to keep this folder up to date.'
   const transferTone = syncStatus === 'error' ? 'error' : transfersReady ? 'active' : ''
-  const searchQuery = search.trim()
-  const searchResults = (searchQuery
-    ? files.filter((item) => item.name.toLowerCase().includes(searchQuery.toLowerCase()) || (item.path ?? '').toLowerCase().includes(searchQuery.toLowerCase()))
-    : files).slice(0, 6)
+  const paletteSearchQuery = paletteQuery.trim()
+  const folderSearchState = !paletteSearchQuery ? 'idle' : (folderSearch.query === paletteSearchQuery ? folderSearch.state : 'loading')
+  const folderResults = folderSearch.query === paletteSearchQuery ? folderSearch.items : []
+  const driveMatches = paletteSearchQuery
+    ? files.filter((item) => item.name.toLowerCase().includes(paletteSearchQuery.toLowerCase()) || (item.path ?? '').toLowerCase().includes(paletteSearchQuery.toLowerCase()))
+    : files
+  const driveResults = driveMatches.slice(0, 6)
+  const activeResultCount = searchScope === 'folder' ? folderResults.length : driveResults.length
+  const safeSearchActive = Math.min(searchActive, Math.max(activeResultCount - 1, 0))
+  const paletteResultCount = searchScope === 'folder'
+    ? folderResults.length
+    : (paletteSearchQuery ? driveMatches.length : driveResults.length)
+
+  function openExplorerResult(entry: FolderSearchEntry) {
+    setExplorerFocus({ path: entry.relativePath, nonce: Date.now() })
+    setSearchOpen(false)
+    setPage('Explorer')
+    setSearchActive(0)
+  }
+
+  function openFilesResults() {
+    setSearch(paletteSearchQuery)
+    setFilesPage(1)
+    setSearchOpen(false)
+    setPage('Files')
+  }
+
+  function openFilesUnfiltered() {
+    setSearch('')
+    setFilesPage(1)
+    setSearchOpen(false)
+    setPage('Files')
+  }
+
+  function activateSearchResult(index: number) {
+    if (searchScope === 'folder') {
+      const entry = folderResults[index]
+      if (entry) openExplorerResult(entry)
+      return
+    }
+    openFilesResults()
+  }
 
   function handleSearchKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
     if (event.key === 'ArrowDown') {
       event.preventDefault()
-      setSearchActive((index) => Math.min(index + 1, Math.max(searchResults.length - 1, 0)))
+      setSearchActive((index) => Math.min(index + 1, Math.max(activeResultCount - 1, 0)))
     } else if (event.key === 'ArrowUp') {
       event.preventDefault()
       setSearchActive((index) => Math.max(index - 1, 0))
     } else if (event.key === 'Enter') {
       event.preventDefault()
-      setSearchOpen(false)
-      setPage('Files')
-      setFilesPage(1)
+      activateSearchResult(safeSearchActive)
     } else if (event.key === 'Escape') {
       event.preventDefault()
       setSearchOpen(false)
@@ -864,9 +943,9 @@ function App() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <a className="brand" href="#overview" onClick={(event) => { event.preventDefault(); setPage('Overview') }}>
+        <a className="brand" href="#overview" onClick={(event) => { event.preventDefault(); setPage('Overview') }} title={`Unite Drive v${import.meta.env.VITE_APP_VERSION}`}>
           <span className="brand-mark"><Cloud size={18} strokeWidth={2.4} /></span>
-          <span>unite<span className="brand-light">drive</span></span>
+          <span className="brand-text">unite<span className="brand-light">drive</span><span className="brand-version">v{import.meta.env.VITE_APP_VERSION}</span></span>
         </a>
 
         <div className="workspace-wrap">
@@ -890,7 +969,7 @@ function App() {
         <p className="nav-label">WORKSPACE</p>
         <nav className="primary-nav" aria-label="Main navigation">
           {navigation.map(({ label, icon: Icon }) => (
-            <button className={`nav-item ${page === label ? 'active' : ''}`} key={label} onClick={() => { setPage(label); if (label === 'Files') setFilesPage(1) }}>
+            <button className={`nav-item ${page === label ? 'active' : ''}`} key={label} onClick={() => { setPage(label); if (label === 'Files') setFilesPage(1); setExplorerFocus(null) }}>
               <Icon size={17} strokeWidth={1.8} />
               <span>{label}</span>
               {label === 'Transfers' && pendingOperations > 0 && <span className="nav-count">{pendingOperations}</span>}
@@ -1091,6 +1170,19 @@ function App() {
             </section>
           )}
 
+          {page === 'Explorer' && (
+            !syncFolder ? (
+              <section className="table-page-section">
+                <div className="empty-files">Choose a local sync folder before browsing it.</div>
+                <div className="table-toolbar">
+                  <button className="button button-primary" onClick={chooseSyncFolder}><FolderOpen size={16} /> Choose folder</button>
+                </div>
+              </section>
+            ) : (
+              <ExplorerTab key={explorerFocus?.nonce ?? 'root'} onNotify={notifyInfo} focus={explorerFocus} />
+            )
+          )}
+
           {page === 'Transfers' && (
             <section className="table-page-section"><div className="transfer-status-bar"><span className={`transfer-status-icon ${transferTone}`}><Activity size={18} /></span><div><strong>{transferTitle}</strong><p>{transferMessage}</p></div>{!accounts.length ? <button className="button button-primary" onClick={connectGoogleAccount}><Plus size={15} /> Connect a drive</button> : !syncFolder ? <button className="button button-secondary" onClick={chooseSyncFolder}><FolderOpen size={15} /> Choose folder</button> : !syncEnabled ? <button className="button button-secondary" onClick={() => setPage('Settings')}><Settings2 size={15} /> Sync settings</button> : <button className="button button-secondary" onClick={syncNow}><RefreshCw size={15} /> Sync now</button>}</div><div className="section-heading transfer-heading"><div><h2>Transfer queue</h2><p>{operations.length ? `${activeOperations.length} active · ${retryOperations.length} retrying · ${failedOperations.length} failed` : 'Uploads, downloads and cleanups'}</p></div><label className="filter-caption"><select aria-label="Activity range" value={transferRange} onChange={(event) => { setTransferRange(event.target.value as typeof transferRange); setTransfersPage(1) }}><option value="24h">LAST 24 HOURS</option><option value="7d">LAST 7 DAYS</option><option value="30d">LAST 30 DAYS</option><option value="all">ALL TIME</option></select></label></div>{failedOperations.length > 0 && <div className="queue-failure-bar"><AlertTriangle size={15} /><span>{failedOperations.length} transfer{failedOperations.length === 1 ? '' : 's'} failed after repeated attempts.</span><button className="button button-secondary" onClick={syncNow}><RefreshCw size={14} /> Retry failed</button></div>}{operations.length === 0 ? <div className="empty-files">No transfers recorded yet.{transfersReady ? ' Press Sync now to scan your drives.' : ' Connect a drive and choose a folder to start syncing.'}</div> : [{ key: 'active', label: 'Active', note: 'Queued and in progress', items: activeOperations }, { key: 'retry', label: 'Retrying', note: 'Waiting for the next attempt', items: retryOperations }, { key: 'failed', label: 'Failed', note: 'Needs a manual retry', items: failedOperations }, { key: 'history', label: 'Recent activity', note: 'Completed transfers', items: pagedCompleted }].map((group) => group.items.length > 0 && (<div className="queue-group" key={group.key}><div className="queue-group-head"><span className="queue-group-title">{group.label}</span><span className="queue-group-count">{group.items.length}</span><span className="queue-group-note">{group.note}</span>{group.key === 'history' && <button className="queue-clear" onClick={clearCompletedOperations}>Clear completed</button>}</div><div className="queue-list">{group.items.map((operation) => <QueueRow key={operation.id} operation={operation} now={now} accountLabel={operation.account_id ? accountEmailById.get(operation.account_id) ?? 'Drive account' : 'Unassigned'} color={operation.account_id ? accountColorById.get(operation.account_id) ?? 'gold' : 'gold'} onCancel={cancelOperation} />)}</div></div>))}{completedOperations.length > 0 && <div className="pagination-bar"><span className="pagination-count">{completedOperations.length} completed</span><label className="pagination-size">Rows<select value={transfersPageSize} onChange={(event) => { setTransfersPageSize(Number(event.target.value)); setTransfersPage(1) }} aria-label="Rows per page"><option value={10}>10</option><option value={20}>20</option><option value={50}>50</option></select></label><div className="pagination-controls"><button className="pagination-button" disabled={transfersSafePage <= 1} onClick={() => setTransfersPage(transfersSafePage - 1)} aria-label="Previous page"><ChevronLeft size={15} /></button><span className="pagination-page">Page {transfersSafePage} of {transfersTotalPages}</span><button className="pagination-button" disabled={transfersSafePage >= transfersTotalPages} onClick={() => setTransfersPage(transfersSafePage + 1)} aria-label="Next page"><ChevronRight size={15} /></button></div></div>}<div className="demo-notice"><CircleHelp size={15} /><span>Every upload, download, rename and cleanup waits in this queue before it runs. Cancelled items can reappear on the next scan if the change is still pending.</span></div></section>
           )}
@@ -1133,7 +1225,7 @@ function App() {
             <section className="settings-page"><div className="settings-group"><div className="settings-group-heading"><span className="settings-group-icon"><Sparkles size={16} /></span><div><h2>File routing</h2><p>Choose how new files are assigned to your drives.</p></div></div><div className="setting-row"><div><strong>Automatically select a drive</strong><p>{autoRoute ? 'New files go to the account with the most available space.' : 'New files go to your default drive when it has room.'}</p></div><button className={`toggle ${autoRoute ? 'on' : ''}`} role="switch" aria-checked={autoRoute} aria-label="Automatically select a drive" onClick={() => updateAutoRoute(!autoRoute)}><span /></button></div>{!autoRoute ? <div className="setting-row"><div><strong>Default drive</strong><p>Used for files that are not yet assigned to a drive.</p></div><label className="drive-select"><select value={preferredAccountId ?? ''} onChange={(event) => updatePreferredAccount(event.target.value)} aria-label="Default drive"><option value="">Most available space</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.email}</option>)}</select></label></div> : null}<div className="setting-row"><div><strong>Minimum free space</strong><p>Do not route files if it would use this reserve.</p></div><label className="reserve-control"><input type="number" min="0" max="50" value={reserve} onChange={(event) => updateReserve(Number(event.target.value))} /><span>%</span></label></div></div><div className="settings-group"><div className="settings-group-heading"><span className="settings-group-icon power"><Power size={16} /></span><div><h2>Background &amp; startup</h2><p>Keep syncing without leaving the window open.</p></div></div><div className="setting-row"><div><strong>Keep running in the tray</strong><p>Closing the window hides Unite Drive to the system tray instead of quitting, so syncing continues. Use the tray icon to reopen or quit.</p></div><span className="setting-badge">Always on</span></div><div className="setting-row"><div><strong>Launch at login</strong><p>Start Unite Drive automatically when you sign in to Windows.</p></div><button className={`toggle ${launchAtLogin ? 'on' : ''}`} role="switch" aria-checked={launchAtLogin} aria-label="Launch at login" onClick={() => updateLaunchAtLogin(!launchAtLogin)}><span /></button></div></div><div className="settings-group"><div className="settings-group-heading"><span className="settings-group-icon folder"><FolderOpen size={16} /></span><div><h2>Local sync folder</h2><p>Choose a folder to keep synchronized with Drive.</p></div></div><div className="folder-picker-row"><span className="folder-path"><FolderOpen size={16} /> {syncFolder ?? 'No folder selected'}</span><button className="button button-secondary" onClick={chooseSyncFolder}>Choose folder</button></div><p className="settings-note">Changes are watched locally when sync is enabled. Initial sync never propagates deletions; later deletions follow the policy above.</p></div><div className="settings-group settings-security"><div className="settings-group-heading"><span className="settings-group-icon security"><ShieldCheck size={16} /></span><div><h2>Account access</h2><p>Manage Google sign-in and connected accounts.</p></div></div><div className="folder-picker-row"><span className="folder-path"><span className="status-hollow" /> {accounts.length ? `${accounts.length} account${accounts.length === 1 ? '' : 's'} available` : 'No Google accounts connected'}</span><button className="button button-secondary" onClick={connectGoogleAccount}>Connect an account</button></div></div></section>
           )}
 
-          <footer className="page-footer"><span><span className="footer-brand-dot" /> unite drive <span className="footer-version">EARLY ACCESS CONCEPT</span></span><span>Designed for your files, wherever they live.</span></footer>
+          <footer className="page-footer"><span><span className="footer-brand-dot" /> unite drive <span className="footer-version">v{import.meta.env.VITE_APP_VERSION}</span></span><span>Designed for your files, wherever they live.</span></footer>
         </div>
       </main>
 
@@ -1143,18 +1235,40 @@ function App() {
           <section className="search-palette" role="dialog" aria-modal="true" aria-label="Search files">
             <div className="search-palette-field">
               <Search size={17} />
-              <input autoFocus aria-label="Search files" placeholder="Search files across all drives…" value={search} onChange={(event) => { setSearch(event.target.value); setSearchActive(0); setFilesPage(1) }} onKeyDown={handleSearchKeyDown} />
+              <input autoFocus aria-label="Search files" placeholder={searchScope === 'folder' ? 'Search inside your synced folder…' : 'Search files across all drives…'} value={paletteQuery} onChange={(event) => { setPaletteQuery(event.target.value); setSearchActive(0) }} onKeyDown={handleSearchKeyDown} />
               <span className="search-hint">ESC</span>
             </div>
+            <div className="search-scope" role="tablist" aria-label="Search scope">
+              <button type="button" role="tab" aria-selected={searchScope === 'drives'} className={`search-scope-option ${searchScope === 'drives' ? 'active' : ''}`} onClick={() => { setSearchScope('drives'); setSearchActive(0) }}>All drives</button>
+              <button type="button" role="tab" aria-selected={searchScope === 'folder'} className={`search-scope-option ${searchScope === 'folder' ? 'active' : ''}`} onClick={() => { setSearchScope('folder'); setSearchActive(0) }} disabled={!syncFolder} title={syncFolder ? undefined : 'Choose a sync folder to search it'}>This folder</button>
+            </div>
             <div className="search-results">
-              {searchResults.length === 0 ? (
+              {searchScope === 'folder' ? (
+                folderSearchState === 'error' ? (
+                  <div className="search-empty"><p>Could not search your sync folder.</p></div>
+                ) : !paletteSearchQuery ? (
+                  <div className="search-empty">
+                    <p>Type to search inside your synced folder.</p>
+                    <div className="search-keys"><span className="search-key"><kbd>↑</kbd><kbd>↓</kbd> Navigate</span><span className="search-key"><kbd>↵</kbd> Open in Explorer</span><span className="search-key"><kbd>Esc</kbd> Close</span></div>
+                  </div>
+                ) : folderResults.length === 0 ? (
+                  <div className="search-empty"><p>{folderSearchState === 'loading' ? 'Searching this folder…' : `No matches in this folder for “${paletteSearchQuery}”.`}</p></div>
+                ) : folderResults.map((entry, index) => (
+                  <button className={`search-result ${index === safeSearchActive ? 'active' : ''}`} key={entry.relativePath} onMouseEnter={() => setSearchActive(index)} onClick={() => openExplorerResult(entry)}>
+                    <span className="file-icon">{entry.isDirectory ? <FolderOpen size={16} /> : fileKindIcon(entry.name)}</span>
+                    <span className="search-result-name">{entry.name}{entry.parentPath && <small>{entry.parentPath}</small>}</span>
+                    <span className="search-result-drive">{entry.isDirectory ? 'Folder' : (entry.accountEmail ?? 'Not assigned')}</span>
+                    <span className="search-result-size">{entry.isDirectory || entry.size == null ? '—' : formatBytes(entry.size)}</span>
+                  </button>
+                ))
+              ) : driveResults.length === 0 ? (
                 <div className="search-empty">
-                  <p>{searchQuery ? `No files match “${searchQuery}”.` : 'Type to search files across every connected drive.'}</p>
-                  {searchQuery && <button className="button button-secondary" onClick={() => { setSearch(''); setSearchOpen(false); setPage('Files'); setFilesPage(1) }}>View all files in Files</button>}
+                  <p>{paletteSearchQuery ? `No files match “${paletteSearchQuery}”.` : 'Type to search files across every connected drive.'}</p>
+                  {paletteSearchQuery && <button className="button button-secondary" onClick={openFilesUnfiltered}>View all files in Files</button>}
                   <div className="search-keys"><span className="search-key"><kbd>↑</kbd><kbd>↓</kbd> Navigate</span><span className="search-key"><kbd>↵</kbd> Open in Files</span><span className="search-key"><kbd>Esc</kbd> Close</span></div>
                 </div>
-              ) : searchResults.map((item, index) => (
-                <button className={`search-result ${index === searchActive ? 'active' : ''}`} key={`${item.path ?? item.name}-${index}`} onMouseEnter={() => setSearchActive(index)} onClick={() => { setSearchOpen(false); setPage('Files'); setFilesPage(1) }}>
+              ) : driveResults.map((item, index) => (
+                <button className={`search-result ${index === safeSearchActive ? 'active' : ''}`} key={`${item.path ?? item.name}-${index}`} onMouseEnter={() => setSearchActive(index)} onClick={openFilesResults}>
                   <span className="file-icon">{fileKindIcon(item.name)}</span>
                   <span className="search-result-name">{item.name}{item.path && item.path !== item.name && <small>{item.path}</small>}</span>
                   <span className="search-result-drive"><span className={`mini-drive-dot ${driveColorClass(item.account)}`} />{item.account}</span>
@@ -1162,7 +1276,7 @@ function App() {
                 </button>
               ))}
             </div>
-            <div className="search-palette-foot"><span>{searchResults.length} result{searchResults.length === 1 ? '' : 's'}{searchQuery ? '' : ' (recent)'}</span><button className="button button-secondary" onClick={() => { setSearchOpen(false); setPage('Files'); setFilesPage(1) }}>Open in Files</button></div>
+            <div className="search-palette-foot"><span>{paletteResultCount} result{paletteResultCount === 1 ? '' : 's'}{searchScope === 'drives' && !paletteSearchQuery ? ' (recent)' : ''}</span><button className="button button-secondary" onClick={searchScope === 'folder' ? () => { setSearchOpen(false); setPage('Explorer') } : openFilesResults}>{searchScope === 'folder' ? 'Open in Explorer' : 'Open in Files'}</button></div>
           </section>
         </div>
       )}

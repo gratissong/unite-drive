@@ -36,6 +36,20 @@ type AddFilesResult = {
   errors: Array<{ name: string; message: string }>
 }
 
+type FsEntry = {
+  name: string
+  isDirectory: boolean
+  size: number | null
+  mtime: string | null
+  accountEmail?: string | null
+  syncState?: string | null
+}
+
+type FsSearchEntry = FsEntry & {
+  relativePath: string
+  parentPath: string
+}
+
 type OAuthConfigStatus = {
   clientId: string
   hasClientSecret: boolean
@@ -72,6 +86,11 @@ type SyncStateSnapshot = {
 }
 
 declare global {
+  // App version injected by vite.config.ts from package.json.
+  interface ImportMetaEnv {
+    readonly VITE_APP_VERSION: string
+  }
+
   interface Window {
     uniteDrive?: {
       isDesktop: boolean
@@ -79,6 +98,15 @@ declare global {
       openSyncFolder: () => Promise<boolean>
       getUserInfo: () => Promise<{ name: string; avatar: string | null }>
       addFiles: () => Promise<AddFilesResult>
+      listDirectory: (relativePath?: string) => Promise<FsEntry[]>
+      searchFolder: (query: string) => Promise<FsSearchEntry[]>
+      createFolder: (relativePath: string) => Promise<{ path: string }>
+      movePath: (from: string, to: string) => Promise<{ from: string; to: string }>
+      movePaths: (moves: Array<{ from: string; to: string }>) => Promise<{ moved: Array<{ from: string; to: string }>; errors: Array<{ from: string; to: string; message: string; code?: string }> }>
+      trashPath: (relativePath: string) => Promise<{ trashed: string }>
+      trashPaths: (paths: string[]) => Promise<{ trashed: string[]; errors: Array<{ path: string; message: string; code?: string }> }>
+      revealInExplorer: (relativePath?: string) => Promise<boolean>
+      importIntoFolder: (relativePath?: string) => Promise<AddFilesResult>
       getSyncSettings: () => Promise<SyncSettings>
       getSyncState: () => Promise<SyncStateSnapshot>
       getOAuthConfigStatus: () => Promise<OAuthConfigStatus>

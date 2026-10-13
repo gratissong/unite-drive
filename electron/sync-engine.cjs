@@ -174,12 +174,41 @@ class SyncEngine {
     for (const action of plan.actions) await this.#queuePlanAction(action)
   }
 
+  // Find local moves/renames before reconcile: a vanished manifest whose last
+  // synced content hash matches a newly-appeared untracked file is a rename, not
+  // a deletion plus re-upload. Only unambiguous 1:1 matches by content are treated
+  // as renames; anything ambiguous or edited falls back to the normal plan.
+  #detectLocalRenames(manifests, localByPath) {
+    const oldByHash = new Map()
+    for (const manifest of manifests) {
+      if (manifest.sync_state !== 'active' || !manifest.drive_file_id || !manifest.baseline_hash) continue
+      if (localByPath.has(manifest.relative_path)) continue
+      if (!oldByHash.has(manifest.baseline_hash)) oldByHash.set(manifest.baseline_hash, [])
+      oldByHash.get(manifest.baseline_hash).push(manifest.relative_path)
+    }
+    const newByHash = new Map()
+    for (const [relativePath, local] of localByPath) {
+      if (manifests.some((manifest) => manifest.relative_path === relativePath)) continue
+      if (!local.hash) continue
+      if (!newByHash.has(local.hash)) newByHash.set(local.hash, [])
+      newByHash.get(local.hash).push(relativePath)
+    }
+    const renames = new Map()
+    for (const [hash, oldPaths] of oldByHash) {
+      const newPaths = newByHash.get(hash)
+      if (oldPaths.length === 1 && newPaths && newPaths.length === 1) renames.set(oldPaths[0], newPaths[0])
+    }
+    return renames
+  }
+
   async #queueIncrementalSync(rootPath, roots) {
     const manifests = this.store.listFiles().filter((file) => file.sync_state !== 'forgotten')
     const manifestByPath = new Map(manifests.map((file) => [file.relative_path, file]))
     const manifestByDriveId = new Set(manifests.map((file) => file.drive_file_id).filter(Boolean))
     const localFiles = await scanSyncRoot(rootPath)
     const localByPath = new Map(localFiles.map((file) => [file.relativePath, file]))
+    const renames = this.#detectLocalRenames(manifests, localByPath)
+    const claimedNew = new Set(renames.values())
 
     const changesSupported = this.providers.length > 0 && this.providers.every((provider) => this.#supportsChanges(provider))
     const consumed = changesSupported ? await this.#consumeChanges() : null
@@ -210,6 +239,14 @@ class SyncEngine {
     }
 
     for (const manifest of manifests) {
+      const renamedDestination = renames.get(manifest.relative_path)
+      if (renamedDestination) {
+        this.#enqueue('rename-remote', renamedDestination, manifest.account_id, manifest.drive_file_id, {
+          sourcePath: manifest.relative_path,
+          destinationPath: renamedDestination,
+        })
+        continue
+      }
       const local = localByPath.get(manifest.relative_path)
       const remote = remoteByDriveId.get(manifest.drive_file_id)
       const action = planSyncAction({
@@ -236,7 +273,7 @@ class SyncEngine {
       await this.#queuePlanAction({ ...action, relativePath: manifest.relative_path, local, remote, manifest })
     }
 
-    const untrackedLocal = localFiles.filter((file) => !manifestByPath.has(file.relativePath))
+    const untrackedLocal = localFiles.filter((file) => !manifestByPath.has(file.relativePath) && !claimedNew.has(file.relativePath))
     const occupiedPaths = new Set([
       ...localFiles.map((file) => file.relativePath),
       ...manifests.map((file) => file.relative_path),
