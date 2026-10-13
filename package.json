@@ -70,7 +70,8 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "Unite-Drive-Setup-${version}.${ext}"
     },
     "portable": {
       "artifactName": "${productName} ${version} (Portable).exe"
