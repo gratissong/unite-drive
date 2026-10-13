@@ -14,6 +14,7 @@ const { parseDesktopOAuthCredentials } = require('./google-oauth-config.cjs')
 const { GoogleDriveProvider } = require('./google-drive-provider.cjs')
 const { SyncEngine } = require('./sync-engine.cjs')
 const { SyncService } = require('./sync-service.cjs')
+const { UpdateService } = require('./update-service.cjs')
 const { resolveSafePath, writeStreamIfAbsent } = require('./file-ops.cjs')
 const { createFolder, listDirectory, movePath, movePaths, searchLocalFolder, trashPath, trashPaths } = require('./explorer-ops.cjs')
 const { scanSimilarGroups } = require('./similar-scanner.cjs')
@@ -28,6 +29,8 @@ let settingsStore
 let syncStore
 let tokenStore
 let syncService
+let updateService
+let lastUpdateNoticeVersion = null
 const driveProviders = new Map()
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
@@ -600,6 +603,10 @@ ipcMain.handle('unite-drive:cancel-operation', (_event, operationId) => {
   return { cancelled: operationId }
 })
 ipcMain.handle('unite-drive:clear-completed-operations', () => ({ removed: syncStore.clearCompletedOperations() }))
+ipcMain.handle('unite-drive:get-update-status', () => (updateService ? updateService.getStatus() : { state: 'idle' }))
+ipcMain.handle('unite-drive:check-for-updates', () => (updateService ? updateService.checkForUpdates({ manual: true }) : { state: 'idle' }))
+ipcMain.handle('unite-drive:download-update', () => (updateService ? updateService.downloadUpdate() : null))
+ipcMain.handle('unite-drive:install-update', () => (updateService ? updateService.installUpdate() : false))
 ipcMain.handle('unite-drive:update-sync-settings', async (_event, patch) => {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new TypeError('Invalid sync settings')
   if (Object.hasOwn(patch, 'folderPath') && patch.folderPath !== settingsStore.load().folderPath && syncStore.getMetadata('activeSyncRoot')) {
@@ -630,8 +637,10 @@ ipcMain.handle('unite-drive:update-sync-settings', async (_event, patch) => {
     throw new TypeError('Storage reserve must be between 0 and 50 percent')
   }
   if (Object.hasOwn(patch, 'launchAtLogin') && typeof patch.launchAtLogin !== 'boolean') throw new TypeError('Invalid launch at login setting')
+  if (Object.hasOwn(patch, 'autoUpdateCheck') && typeof patch.autoUpdateCheck !== 'boolean') throw new TypeError('Invalid automatic update setting')
   const settings = settingsStore.update(patch)
   if (Object.hasOwn(patch, 'launchAtLogin')) applyLaunchAtLogin()
+  if (Object.hasOwn(patch, 'autoUpdateCheck')) updateService?.setAutoCheck(settings.autoUpdateCheck)
   try {
     await configureSyncService()
   } catch (error) {
@@ -657,6 +666,7 @@ app.whenReady().then(() => {
   createWindow()
   createTray()
   applyLaunchAtLogin()
+  createUpdateService()
   void configureSyncService().catch((error) => publishSyncStatus({ status: 'error', message: error.message, code: error.code }))
   app.on('activate', () => showWindow())
 })
@@ -738,6 +748,7 @@ function buildTrayMenu() {
       click: () => { void setSyncEnabledFromTray(!settings.syncEnabled) },
     },
     { type: 'separator' },
+    { label: 'Check for updates', click: () => { showWindow(); void updateService?.checkForUpdates({ manual: true }) } },
     { label: 'Quit Unite Drive', click: () => quitApp() },
   ])
 }
@@ -792,6 +803,40 @@ function createSyncEngine(settings) {
     settings,
     trashLocal: (filePath) => shell.trashItem(filePath),
   })
+}
+
+// Reads electron-updater lazily so a missing or unsupported updater only
+// downgrades update checks to the "unsupported" status instead of stopping the
+// app from starting.
+function createUpdateService() {
+  let updater = null
+  try {
+    ({ autoUpdater: updater } = require('electron-updater'))
+  } catch (error) {
+    console.error(`[Unite Drive] Automatic updates unavailable: ${error.message}`)
+  }
+  updateService = new UpdateService({
+    updater,
+    currentVersion: app.getVersion(),
+    isPackaged: app.isPackaged,
+    onStatus: publishUpdateStatus,
+  })
+  updateService.start({ autoCheck: settingsStore.load().autoUpdateCheck })
+}
+
+function publishUpdateStatus(status) {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('unite-drive:update-status', status)
+  if (status.state === 'downloaded' && status.version && status.version !== lastUpdateNoticeVersion) {
+    lastUpdateNoticeVersion = status.version
+    try {
+      new Notification({
+        title: 'Update ready to install',
+        body: `Unite Drive ${status.version} has been downloaded. Use Restart to update in Settings, or it installs the next time you quit.`,
+      }).show()
+    } catch {
+      // Notifications can be unavailable (for example without a display server); ignore.
+    }
+  }
 }
 
 function publishSyncStatus(status) {

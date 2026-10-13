@@ -15,6 +15,10 @@ contextBridge.exposeInMainWorld('uniteDrive', {
   trashPaths: (paths) => ipcRenderer.invoke('unite-drive:trash-paths', paths),
   revealInExplorer: (relativePath) => ipcRenderer.invoke('unite-drive:reveal-in-explorer', relativePath),
   importIntoFolder: (relativePath) => ipcRenderer.invoke('unite-drive:import-into-folder', relativePath),
+  getUpdateStatus: () => ipcRenderer.invoke('unite-drive:get-update-status'),
+  checkForUpdates: () => ipcRenderer.invoke('unite-drive:check-for-updates'),
+  downloadUpdate: () => ipcRenderer.invoke('unite-drive:download-update'),
+  installUpdate: () => ipcRenderer.invoke('unite-drive:install-update'),
   getSyncSettings: () => ipcRenderer.invoke('unite-drive:get-sync-settings'),
   getOAuthConfigStatus: () => ipcRenderer.invoke('unite-drive:get-oauth-config-status'),
   importOAuthConfig: () => ipcRenderer.invoke('unite-drive:import-oauth-config'),
@@ -38,5 +42,10 @@ contextBridge.exposeInMainWorld('uniteDrive', {
     const listener = (_event, settings) => callback(settings)
     ipcRenderer.on('unite-drive:settings-changed', listener)
     return () => ipcRenderer.removeListener('unite-drive:settings-changed', listener)
+  },
+  onUpdateStatus: (callback) => {
+    const listener = (_event, status) => callback(status)
+    ipcRenderer.on('unite-drive:update-status', listener)
+    return () => ipcRenderer.removeListener('unite-drive:update-status', listener)
   },
 })

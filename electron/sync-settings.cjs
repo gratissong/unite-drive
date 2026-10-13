@@ -12,6 +12,7 @@ const defaults = Object.freeze({
   autoRoute: true,
   preferredAccountId: null,
   launchAtLogin: false,
+  autoUpdateCheck: true,
 })
 
 function normalizeSettings(value) {
@@ -29,6 +30,7 @@ function normalizeSettings(value) {
       ? value.preferredAccountId.slice(0, 128)
       : null,
     launchAtLogin: value.launchAtLogin === true,
+    autoUpdateCheck: value.autoUpdateCheck !== false,
   }
 }
 

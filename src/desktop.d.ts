@@ -13,6 +13,7 @@ type SyncSettings = {
   autoRoute: boolean
   preferredAccountId: string | null
   launchAtLogin: boolean
+  autoUpdateCheck: boolean
 }
 
 type DriveAccountInfo = {
@@ -91,6 +92,18 @@ declare global {
     readonly VITE_APP_VERSION: string
   }
 
+  // Update state machine exposed by the main process (electron/update-service.cjs).
+  type UpdateState = 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'up-to-date' | 'unsupported' | 'error'
+
+  type UpdateStatus = {
+    state: UpdateState
+    currentVersion?: string
+    version?: string | null
+    percent?: number
+    message?: string
+    checkedAt?: string
+  }
+
   interface Window {
     uniteDrive?: {
       isDesktop: boolean
@@ -126,8 +139,13 @@ declare global {
       }[]>>
       applyDedupe: (removals: Array<{ relativePath: string }>) => Promise<{ removed: string[]; errors: Array<{ relativePath: string; message: string }> }>
       resetSyncState: () => Promise<boolean>
+      getUpdateStatus: () => Promise<UpdateStatus>
+      checkForUpdates: () => Promise<UpdateStatus>
+      downloadUpdate: () => Promise<UpdateStatus | null>
+      installUpdate: () => Promise<boolean>
       onSyncStatus: (callback: (status: SyncStatus) => void) => () => void
       onSettingsChanged: (callback: (settings: SyncSettings) => void) => () => void
+      onUpdateStatus: (callback: (status: UpdateStatus) => void) => () => void
     }
   }
 }

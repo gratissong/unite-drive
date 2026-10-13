@@ -102,7 +102,7 @@ type AppNotification = {
   message: string
   time: Date
   read: boolean
-  action?: 'reconnect'
+  action?: 'reconnect' | 'install-update'
 }
 
 const defaultNotifTitle: Record<NotificationKind, string> = {
@@ -257,6 +257,8 @@ function App() {
   const [autoRoute, setAutoRoute] = useState(true)
   const [preferredAccountId, setPreferredAccountId] = useState<string | null>(null)
   const [launchAtLogin, setLaunchAtLogin] = useState(false)
+  const [autoUpdateCheck, setAutoUpdateCheck] = useState(true)
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' })
   const [userName, setUserName] = useState('')
   const [userAvatar, setUserAvatar] = useState<string | null>(null)
   const [reserve, setReserve] = useState(5)
@@ -297,6 +299,7 @@ function App() {
   const [notifOpen, setNotifOpen] = useState(false)
   const notifIdRef = useRef(0)
   const warnedReadAccessRef = useRef<Set<string>>(new Set())
+  const updateNoticeRef = useRef('')
 
   const notify = useCallback((kind: NotificationKind, message: string, title?: string, action?: AppNotification['action']) => {
     const id = ++notifIdRef.current
@@ -305,6 +308,24 @@ function App() {
   }, [])
 
   const notifyInfo = useCallback((message: string) => notify('info', message), [notify])
+
+  // Surface update progress once per version/state so an automatic check does
+  // not spam the notification list.
+  const handleUpdateStatus = useCallback((status: UpdateStatus) => {
+    setUpdateStatus(status)
+    if ((status.state === 'available' || status.state === 'downloaded') && status.version) {
+      const key = `${status.state}:${status.version}`
+      if (updateNoticeRef.current === key) return
+      updateNoticeRef.current = key
+      if (status.state === 'available') notify('info', `Unite Drive ${status.version} is downloading in the background.`, 'Update available')
+      else notify('success', `Unite Drive ${status.version} is ready. Restart to finish updating.`, 'Update ready', 'install-update')
+    } else if (status.state === 'error' && status.message) {
+      const key = `error:${status.message}`
+      if (updateNoticeRef.current === key) return
+      updateNoticeRef.current = key
+      notify('error', status.message, 'Update check failed')
+    }
+  }, [notify])
 
   function markAllNotificationsRead() {
     setNotifications((current) => current.map((item) => ({ ...item, read: true })))
@@ -385,6 +406,7 @@ function App() {
       setAutoRoute(settings.autoRoute)
       setPreferredAccountId(settings.preferredAccountId)
       setLaunchAtLogin(settings.launchAtLogin)
+      setAutoUpdateCheck(settings.autoUpdateCheck)
     }).catch(() => notify('error', 'Could not load saved sync settings.'))
     return () => { active = false }
   }, [notify])
@@ -460,7 +482,17 @@ function App() {
     setAutoRoute(settings.autoRoute)
     setPreferredAccountId(settings.preferredAccountId)
     setLaunchAtLogin(settings.launchAtLogin)
+    setAutoUpdateCheck(settings.autoUpdateCheck)
   }), [])
+
+  useEffect(() => {
+    const bridge = window.uniteDrive
+    if (!bridge) return
+    let active = true
+    bridge.getUpdateStatus().then((status) => { if (active) handleUpdateStatus(status) }).catch(() => {})
+    const unsubscribe = bridge.onUpdateStatus(handleUpdateStatus)
+    return () => { active = false; unsubscribe?.() }
+  }, [handleUpdateStatus])
 
   useEffect(() => {
     const bridge = window.uniteDrive
@@ -729,6 +761,39 @@ function App() {
     }
   }
 
+  async function updateAutoUpdateCheck(enabled: boolean) {
+    setAutoUpdateCheck(enabled)
+    try {
+      await window.uniteDrive?.updateSyncSettings({ autoUpdateCheck: enabled })
+    } catch {
+      setAutoUpdateCheck(!enabled)
+      notify('error', 'Could not save the update preference.')
+    }
+  }
+
+  async function checkForUpdates() {
+    if (!window.uniteDrive) {
+      notify('info', 'Update checks are available in the Windows desktop app.')
+      return
+    }
+    try {
+      const status = await window.uniteDrive.checkForUpdates()
+      if (status) handleUpdateStatus(status)
+      if (status?.state === 'up-to-date') notify('success', 'You are running the latest version of Unite Drive.', 'Up to date')
+    } catch (error) {
+      notify('error', error instanceof Error ? error.message : 'Could not check for updates.', 'Update check failed')
+    }
+  }
+
+  async function installUpdate() {
+    if (!window.uniteDrive) return
+    try {
+      await window.uniteDrive.installUpdate()
+    } catch (error) {
+      notify('error', error instanceof Error ? error.message : 'Could not restart to update.')
+    }
+  }
+
   async function syncNow() {
     if (!window.uniteDrive) {
       notify('info', 'Sample storage figures refreshed.')
@@ -881,6 +946,18 @@ function App() {
     : syncEnabled ? 'Watching your local folder for changes.'
     : 'Turn on sync in Settings to keep this folder up to date.'
   const transferTone = syncStatus === 'error' ? 'error' : transfersReady ? 'active' : ''
+  const updateStatusText = (() => {
+    switch (updateStatus.state) {
+      case 'checking': return 'Checking GitHub for a newer release…'
+      case 'available': return `Unite Drive ${updateStatus.version ?? ''} is available. Downloading in the background…`
+      case 'downloading': return `Downloading update… ${updateStatus.percent ?? 0}%`
+      case 'downloaded': return `Unite Drive ${updateStatus.version ?? ''} is ready. Restart to finish updating.`
+      case 'up-to-date': return 'You are running the latest version of Unite Drive.'
+      case 'unsupported': return updateStatus.message ?? 'Update checks run in the installed app.'
+      case 'error': return updateStatus.message ?? 'The last update check failed.'
+      default: return 'Updates are checked automatically after launch.'
+    }
+  })()
   const paletteSearchQuery = paletteQuery.trim()
   const folderSearchState = !paletteSearchQuery ? 'idle' : (folderSearch.query === paletteSearchQuery ? folderSearch.state : 'loading')
   const folderResults = folderSearch.query === paletteSearchQuery ? folderSearch.items : []
@@ -1033,6 +1110,7 @@ function App() {
                             <p className="notif-item-title"><strong>{item.title}</strong><small>{formatRelativeTime(item.time)}</small></p>
                             <p className="notif-item-message">{item.message}</p>
                             {item.action === 'reconnect' && <button className="notif-action" onClick={() => { setNotifOpen(false); void connectGoogleAccount() }}>Reconnect now</button>}
+                            {item.action === 'install-update' && <button className="notif-action" onClick={() => { setNotifOpen(false); void installUpdate() }}>Restart to update</button>}
                           </div>
                           <button className="notif-dismiss" aria-label="Dismiss notification" onClick={() => dismissNotification(item.id)}><X size={13} /></button>
                         </article>
@@ -1222,7 +1300,7 @@ function App() {
           {page === 'Settings' && <SyncPolicyControls conflictPolicy={conflictPolicy} deletionPolicy={deletionPolicy} onConflictPolicyChange={updateConflictPolicy} onDeletionPolicyChange={updateDeletionPolicy} />}
 
           {page === 'Settings' && (
-            <section className="settings-page"><div className="settings-group"><div className="settings-group-heading"><span className="settings-group-icon"><Sparkles size={16} /></span><div><h2>File routing</h2><p>Choose how new files are assigned to your drives.</p></div></div><div className="setting-row"><div><strong>Automatically select a drive</strong><p>{autoRoute ? 'New files go to the account with the most available space.' : 'New files go to your default drive when it has room.'}</p></div><button className={`toggle ${autoRoute ? 'on' : ''}`} role="switch" aria-checked={autoRoute} aria-label="Automatically select a drive" onClick={() => updateAutoRoute(!autoRoute)}><span /></button></div>{!autoRoute ? <div className="setting-row"><div><strong>Default drive</strong><p>Used for files that are not yet assigned to a drive.</p></div><label className="drive-select"><select value={preferredAccountId ?? ''} onChange={(event) => updatePreferredAccount(event.target.value)} aria-label="Default drive"><option value="">Most available space</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.email}</option>)}</select></label></div> : null}<div className="setting-row"><div><strong>Minimum free space</strong><p>Do not route files if it would use this reserve.</p></div><label className="reserve-control"><input type="number" min="0" max="50" value={reserve} onChange={(event) => updateReserve(Number(event.target.value))} /><span>%</span></label></div></div><div className="settings-group"><div className="settings-group-heading"><span className="settings-group-icon power"><Power size={16} /></span><div><h2>Background &amp; startup</h2><p>Keep syncing without leaving the window open.</p></div></div><div className="setting-row"><div><strong>Keep running in the tray</strong><p>Closing the window hides Unite Drive to the system tray instead of quitting, so syncing continues. Use the tray icon to reopen or quit.</p></div><span className="setting-badge">Always on</span></div><div className="setting-row"><div><strong>Launch at login</strong><p>Start Unite Drive automatically when you sign in to Windows.</p></div><button className={`toggle ${launchAtLogin ? 'on' : ''}`} role="switch" aria-checked={launchAtLogin} aria-label="Launch at login" onClick={() => updateLaunchAtLogin(!launchAtLogin)}><span /></button></div></div><div className="settings-group"><div className="settings-group-heading"><span className="settings-group-icon folder"><FolderOpen size={16} /></span><div><h2>Local sync folder</h2><p>Choose a folder to keep synchronized with Drive.</p></div></div><div className="folder-picker-row"><span className="folder-path"><FolderOpen size={16} /> {syncFolder ?? 'No folder selected'}</span><button className="button button-secondary" onClick={chooseSyncFolder}>Choose folder</button></div><p className="settings-note">Changes are watched locally when sync is enabled. Initial sync never propagates deletions; later deletions follow the policy above.</p></div><div className="settings-group settings-security"><div className="settings-group-heading"><span className="settings-group-icon security"><ShieldCheck size={16} /></span><div><h2>Account access</h2><p>Manage Google sign-in and connected accounts.</p></div></div><div className="folder-picker-row"><span className="folder-path"><span className="status-hollow" /> {accounts.length ? `${accounts.length} account${accounts.length === 1 ? '' : 's'} available` : 'No Google accounts connected'}</span><button className="button button-secondary" onClick={connectGoogleAccount}>Connect an account</button></div></div></section>
+            <section className="settings-page"><div className="settings-group"><div className="settings-group-heading"><span className="settings-group-icon"><Sparkles size={16} /></span><div><h2>File routing</h2><p>Choose how new files are assigned to your drives.</p></div></div><div className="setting-row"><div><strong>Automatically select a drive</strong><p>{autoRoute ? 'New files go to the account with the most available space.' : 'New files go to your default drive when it has room.'}</p></div><button className={`toggle ${autoRoute ? 'on' : ''}`} role="switch" aria-checked={autoRoute} aria-label="Automatically select a drive" onClick={() => updateAutoRoute(!autoRoute)}><span /></button></div>{!autoRoute ? <div className="setting-row"><div><strong>Default drive</strong><p>Used for files that are not yet assigned to a drive.</p></div><label className="drive-select"><select value={preferredAccountId ?? ''} onChange={(event) => updatePreferredAccount(event.target.value)} aria-label="Default drive"><option value="">Most available space</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.email}</option>)}</select></label></div> : null}<div className="setting-row"><div><strong>Minimum free space</strong><p>Do not route files if it would use this reserve.</p></div><label className="reserve-control"><input type="number" min="0" max="50" value={reserve} onChange={(event) => updateReserve(Number(event.target.value))} /><span>%</span></label></div></div><div className="settings-group"><div className="settings-group-heading"><span className="settings-group-icon power"><Power size={16} /></span><div><h2>Background &amp; startup</h2><p>Keep syncing without leaving the window open.</p></div></div><div className="setting-row"><div><strong>Keep running in the tray</strong><p>Closing the window hides Unite Drive to the system tray instead of quitting, so syncing continues. Use the tray icon to reopen or quit.</p></div><span className="setting-badge">Always on</span></div><div className="setting-row"><div><strong>Launch at login</strong><p>Start Unite Drive automatically when you sign in to Windows.</p></div><button className={`toggle ${launchAtLogin ? 'on' : ''}`} role="switch" aria-checked={launchAtLogin} aria-label="Launch at login" onClick={() => updateLaunchAtLogin(!launchAtLogin)}><span /></button></div></div><div className="settings-group"><div className="settings-group-heading"><span className="settings-group-icon updates"><RefreshCw size={16} /></span><div><h2>Updates</h2><p>Get new versions from GitHub releases.</p></div></div><div className="setting-row"><div><strong>Installed version</strong><p>The version running on this PC.</p></div><span className="setting-badge">v{import.meta.env.VITE_APP_VERSION}</span></div><div className="setting-row"><div><strong>Automatically check for updates</strong><p>Checks GitHub shortly after launch and periodically while the app runs.</p></div><button className={`toggle ${autoUpdateCheck ? 'on' : ''}`} role="switch" aria-checked={autoUpdateCheck} aria-label="Automatically check for updates" onClick={() => updateAutoUpdateCheck(!autoUpdateCheck)}><span /></button></div><div className="setting-row"><div><strong>Update status</strong><p>{updateStatusText}</p></div><div className="update-actions">{updateStatus.state === 'downloaded' ? <button className="button button-primary" onClick={installUpdate}><RefreshCw size={15} /> Restart to update</button> : <button className="button button-secondary" onClick={checkForUpdates} disabled={updateStatus.state === 'checking' || updateStatus.state === 'downloading'}><RefreshCw size={15} /> {updateStatus.state === 'checking' ? 'Checking…' : 'Check for updates'}</button>}</div></div></div><div className="settings-group"><div className="settings-group-heading"><span className="settings-group-icon folder"><FolderOpen size={16} /></span><div><h2>Local sync folder</h2><p>Choose a folder to keep synchronized with Drive.</p></div></div><div className="folder-picker-row"><span className="folder-path"><FolderOpen size={16} /> {syncFolder ?? 'No folder selected'}</span><button className="button button-secondary" onClick={chooseSyncFolder}>Choose folder</button></div><p className="settings-note">Changes are watched locally when sync is enabled. Initial sync never propagates deletions; later deletions follow the policy above.</p></div><div className="settings-group settings-security"><div className="settings-group-heading"><span className="settings-group-icon security"><ShieldCheck size={16} /></span><div><h2>Account access</h2><p>Manage Google sign-in and connected accounts.</p></div></div><div className="folder-picker-row"><span className="folder-path"><span className="status-hollow" /> {accounts.length ? `${accounts.length} account${accounts.length === 1 ? '' : 's'} available` : 'No Google accounts connected'}</span><button className="button button-secondary" onClick={connectGoogleAccount}>Connect an account</button></div></div></section>
           )}
 
           <footer className="page-footer"><span><span className="footer-brand-dot" /> unite drive <span className="footer-version">v{import.meta.env.VITE_APP_VERSION}</span></span><span>Designed for your files, wherever they live.</span></footer>

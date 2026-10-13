@@ -52,3 +52,14 @@ test('persists the launch at login preference', (context) => {
   assert.equal(store.load().launchAtLogin, true)
   assert.equal(store.update({ launchAtLogin: 'yes' }).launchAtLogin, false)
 })
+
+test('persists the automatic update check preference', (context) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'unite-drive-settings-'))
+  context.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  const store = createSettingsStore(path.join(directory, 'sync-settings.json'))
+
+  assert.equal(store.load().autoUpdateCheck, true)
+  assert.equal(store.update({ autoUpdateCheck: false }).autoUpdateCheck, false)
+  assert.equal(store.load().autoUpdateCheck, false)
+  assert.equal(store.update({ autoUpdateCheck: 'no' }).autoUpdateCheck, true)
+})

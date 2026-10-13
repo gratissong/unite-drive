@@ -444,7 +444,8 @@ h1, h2 { font-family: 'Manrope', 'Segoe UI', sans-serif; color: var(--ink); }
 .settings-group { margin-bottom: 15px; padding: 18px 20px 8px; border: 1px solid #e3e8e1; border-radius: 6px; background: #fff; }
 .settings-group-heading { display: flex; align-items: center; gap: 11px; padding-bottom: 14px; }
 .settings-group-icon { display: grid; place-items: center; width: 32px; height: 32px; flex: 0 0 auto; border-radius: 6px; background: #edf4ed; color: #4c7d5d; }
-.settings-group-icon.folder { background: #edf2f8; color: #587b9f; }.settings-group-icon.security { background: #f6f1e8; color: #967746; }.settings-group-icon.power { background: #eef3ef; color: #4c7d5d; }
+.settings-group-icon.folder { background: #edf2f8; color: #587b9f; }.settings-group-icon.security { background: #f6f1e8; color: #967746; }.settings-group-icon.power { background: #eef3ef; color: #4c7d5d; }.settings-group-icon.updates { background: #eef3ef; color: #4c7d5d; }
+.update-actions { display: flex; align-items: center; gap: 8px; }
 .settings-group-heading h2 { font-size: 13px; }.settings-group-heading p { margin-top: 2px; color: #868d84; font-size: 10px; }
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 60px; border-top: 1px solid #edf0eb; }
 .setting-row strong { font-size: 11px; font-weight: 600; }.setting-row p { margin-top: 2px; color: #858d83; font-size: 10px; }

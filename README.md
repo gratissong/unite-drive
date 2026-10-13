@@ -43,6 +43,15 @@ Connected accounts can be removed from the **Accounts** page (trash icon on the 
 - Only one instance runs at a time. Launching the app again focuses the existing window instead of starting a second sync watcher against the same folder.
 - **Launch at login** (Settings → Background & startup) starts Unite Drive when you sign in to Windows. The preference is stored with the other settings and applied immediately.
 
+## Updates
+
+The installed app can check GitHub Releases for a newer version and install it in the background. It reads the `app-update.yml` manifest that electron-builder generates from the `build.publish` GitHub remote, and reports an "unsupported" status when running from source.
+
+- Shortly after launch, and periodically while the app runs, Unite Drive checks for a newer release, downloads it, and installs it the next time you quit. **Settings → Updates** shows the installed version and current status, offers **Check for updates**, and shows **Restart to update** once a download finishes. **Automatically check for updates** can be turned off; a manual check is still available from Settings and the tray menu.
+- The update feed is read anonymously, so the repository (or at least its releases) must be **public**.
+- Publish a release with `npm run release:win` (set `GH_TOKEN` to a token with `repo` scope). electron-builder uploads the installer, `latest.yml`, and the blockmap to a GitHub Release tagged `v<version>`. Bump `version` in `package.json` first — the tag is derived from it.
+- Windows installers are not code signed. electron-updater checks a downloaded installer against `publisherName` only when signing is configured, so unsigned builds still update, but Windows shows a SmartScreen warning on install. Only the installed NSIS build can self-update; the portable executable cannot.
+
 ## Current limitations
 
 - Google Drive native Docs/Sheets/Slides export and conversion are not implemented; binary files are supported.

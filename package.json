@@ -11,12 +11,14 @@
     "build": "tsc -b && vite build",
     "dist:win": "npm run build && electron-builder --win nsis",
     "dist:win:portable": "npm run build && electron-builder --win portable",
+    "release:win": "npm run build && electron-builder --win nsis --publish always",
     "lint": "oxlint",
     "test": "node --test",
     "preview": "vite preview"
   },
   "dependencies": {
     "chokidar": "^5.0.0",
+    "electron-updater": "^6.8.9",
     "googleapis": "^185.0.0",
     "lucide-react": "^1.55.0",
     "react": "^19.2.8",
@@ -47,6 +49,14 @@
     "directories": {
       "output": "release"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "gratissong",
+        "repo": "unite-drive",
+        "releaseType": "release"
+      }
+    ],
     "win": {
       "icon": "electron/assets/app-icon.ico",
       "target": [
