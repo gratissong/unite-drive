@@ -125,7 +125,7 @@ export default function ExplorerTab({ onNotify, focus }: { onNotify?: (message: 
   const [selected, setSelected] = useState<Set<string>>(() => new Set())
   const [anchor, setAnchor] = useState<string | null>(null)
   const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(25)
+  const [pageSize, setPageSize] = useState(10)
   const [dragging, setDragging] = useState(false)
   const [dragCount, setDragCount] = useState(0)
   const [dropTarget, setDropTarget] = useState<string | null>(null)
@@ -467,26 +467,28 @@ export default function ExplorerTab({ onNotify, focus }: { onNotify?: (message: 
         ))}
       </div>
 
-      <div className="explorer-toolbar table-toolbar">
-        <div className="search-field"><Search size={16} /><input aria-label="Filter this folder" placeholder="Filter this folder" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); clearSelection() }} /></div>
-        <button className="button button-secondary" onClick={() => goTo(segments)}><RefreshCw size={15} /> Refresh</button>
-        <button className="button button-secondary" onClick={createNewFolder}><Plus size={15} /> New folder</button>
-        <button className="button button-secondary" onClick={uploadHere}><Upload size={15} /> Upload here</button>
-        <button className="button button-secondary" onClick={() => bridge?.revealInExplorer(currentPath)}><ArrowUpRight size={15} /> Open in Explorer</button>
-        <button className="button button-secondary" onClick={selectAll} disabled={!filtered.length} title="Select all (Ctrl+A)"><SquareCheck size={15} /> Select all</button>
+      <div className="explorer-actionbar">
+        {selected.size > 0 ? (
+          <div className="explorer-selection-bar" role="status">
+            <SquareCheck size={15} />
+            <span><strong>{selected.size}</strong> selected</span>
+            <button className="button button-primary" onClick={() => setMoving(selectedTargets)}><FolderInput size={14} /> Move…</button>
+            <button className="button button-secondary" onClick={() => { void deleteSelected() }}><Trash2 size={14} /> Delete</button>
+            <span className="explorer-selection-spacer" />
+            <span className="explorer-selection-hint">Drag onto a folder or breadcrumb to move</span>
+            <button className="text-button" onClick={clearSelection}>Clear</button>
+          </div>
+        ) : (
+          <div className="explorer-toolbar table-toolbar">
+            <div className="search-field"><Search size={16} /><input aria-label="Filter this folder" placeholder="Filter this folder" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); clearSelection() }} /></div>
+            <button className="button button-secondary" onClick={() => goTo(segments)}><RefreshCw size={15} /> Refresh</button>
+            <button className="button button-secondary" onClick={createNewFolder}><Plus size={15} /> New folder</button>
+            <button className="button button-secondary" onClick={uploadHere}><Upload size={15} /> Upload here</button>
+            <button className="button button-secondary" onClick={() => bridge?.revealInExplorer(currentPath)}><ArrowUpRight size={15} /> Open in Explorer</button>
+            <button className="button button-secondary" onClick={selectAll} disabled={!filtered.length} title="Select all (Ctrl+A)"><SquareCheck size={15} /> Select all</button>
+          </div>
+        )}
       </div>
-
-      {selected.size > 0 && (
-        <div className="explorer-selection-bar" role="status">
-          <SquareCheck size={15} />
-          <span><strong>{selected.size}</strong> selected</span>
-          <button className="button button-primary" onClick={() => setMoving(selectedTargets)}><FolderInput size={14} /> Move…</button>
-          <button className="button button-secondary" onClick={() => { void deleteSelected() }}><Trash2 size={14} /> Delete</button>
-          <span className="explorer-selection-spacer" />
-          <span className="explorer-selection-hint">Drag onto a folder or breadcrumb to move</span>
-          <button className="text-button" onClick={clearSelection}>Clear</button>
-        </div>
-      )}
 
       {currentPath && <div className="explorer-parent"><button className="text-button" onClick={() => goTo(segments.slice(0, -1))}><ArrowUp size={14} /> Up one level</button></div>}
 
