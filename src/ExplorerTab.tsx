@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   ArrowUp,
   ArrowUpRight,
+  ChevronLeft,
   ChevronRight,
   File,
   FileArchive,
@@ -123,6 +124,8 @@ export default function ExplorerTab({ onNotify, focus }: { onNotify?: (message: 
   const [moving, setMoving] = useState<MoveTarget[] | null>(null)
   const [selected, setSelected] = useState<Set<string>>(() => new Set())
   const [anchor, setAnchor] = useState<string | null>(null)
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(25)
   const [dragging, setDragging] = useState(false)
   const [dragCount, setDragCount] = useState(0)
   const [dropTarget, setDropTarget] = useState<string | null>(null)
@@ -133,6 +136,9 @@ export default function ExplorerTab({ onNotify, focus }: { onNotify?: (message: 
   const filtered = search.trim()
     ? entries.filter((entry) => entry.name.toLowerCase().includes(search.trim().toLowerCase()))
     : entries
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize))
+  const safePage = Math.min(page, totalPages)
+  const visible = filtered.slice((safePage - 1) * pageSize, safePage * pageSize)
   const selectedTargets: MoveTarget[] = entries
     .filter((entry) => selected.has(entry.name))
     .map((entry) => ({ name: entry.name, isDirectory: entry.isDirectory, path: childPath(segments, entry.name) }))
@@ -219,6 +225,7 @@ export default function ExplorerTab({ onNotify, focus }: { onNotify?: (message: 
     setSearch('')
     setSelected(new Set())
     setAnchor(null)
+    setPage(1)
   }
 
   const openFolder = (name: string) => goTo([...segments, name])
@@ -461,7 +468,7 @@ export default function ExplorerTab({ onNotify, focus }: { onNotify?: (message: 
       </div>
 
       <div className="explorer-toolbar table-toolbar">
-        <div className="search-field"><Search size={16} /><input aria-label="Filter this folder" placeholder="Filter this folder" value={search} onChange={(event) => { setSearch(event.target.value); clearSelection() }} /></div>
+        <div className="search-field"><Search size={16} /><input aria-label="Filter this folder" placeholder="Filter this folder" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); clearSelection() }} /></div>
         <button className="button button-secondary" onClick={() => goTo(segments)}><RefreshCw size={15} /> Refresh</button>
         <button className="button button-secondary" onClick={createNewFolder}><Plus size={15} /> New folder</button>
         <button className="button button-secondary" onClick={uploadHere}><Upload size={15} /> Upload here</button>
@@ -506,7 +513,8 @@ export default function ExplorerTab({ onNotify, focus }: { onNotify?: (message: 
           <div className="explorer-error"><AlertTriangle size={16} /><span>{error}</span></div>
         ) : filtered.length === 0 ? (
           <div className="empty-files">{search ? 'No matches in this folder.' : 'This folder is empty.'}</div>
-        ) : filtered.map((entry, index) => {
+        ) : visible.map((entry, index) => {
+          const rowIndex = (safePage - 1) * pageSize + index
           const showEditInput = editing && !editing.isNewFolder && editing.name === entry.name
           const isSelected = selected.has(entry.name)
           return (
@@ -514,7 +522,7 @@ export default function ExplorerTab({ onNotify, focus }: { onNotify?: (message: 
               className={`file-table-row${isSelected ? ' is-selected' : ''}${entry.name === highlightName ? ' explorer-row-focus' : ''}${dropTarget === entry.name ? ' is-drop-target' : ''}`}
               key={entry.name}
               draggable={!editing && !moving}
-              onClick={(event) => handleRowSelect(entry.name, index, event)}
+              onClick={(event) => handleRowSelect(entry.name, rowIndex, event)}
               onDoubleClick={() => { if (entry.isDirectory) openFolder(entry.name); else reveal(entry.name) }}
               onDragStart={(event) => beginDrag(entry.name, event)}
               onDragEnd={endDrag}
@@ -534,7 +542,7 @@ export default function ExplorerTab({ onNotify, focus }: { onNotify?: (message: 
                   <button
                     className="explorer-name"
                     title={entry.name}
-                    onClick={(event) => { event.stopPropagation(); handleRowSelect(entry.name, index, event) }}
+                    onClick={(event) => { event.stopPropagation(); handleRowSelect(entry.name, rowIndex, event) }}
                     onDoubleClick={(event) => { event.stopPropagation(); if (entry.isDirectory) openFolder(entry.name); else reveal(entry.name) }}
                   >{entry.name}</button>
                 )}
@@ -553,6 +561,22 @@ export default function ExplorerTab({ onNotify, focus }: { onNotify?: (message: 
           )
         })}
       </div>
+
+      {filtered.length > 0 && (
+        <div className="pagination-bar">
+          <span className="pagination-count">{filtered.length} {plural(filtered.length, 'item')}</span>
+          <label className="pagination-size">Rows
+            <select value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1) }} aria-label="Rows per page">
+              <option value={10}>10</option><option value={25}>25</option><option value={50}>50</option><option value={100}>100</option>
+            </select>
+          </label>
+          <div className="pagination-controls">
+            <button className="pagination-button" disabled={safePage <= 1} onClick={() => setPage(safePage - 1)} aria-label="Previous page"><ChevronLeft size={15} /></button>
+            <span className="pagination-page">Page {safePage} of {totalPages}</span>
+            <button className="pagination-button" disabled={safePage >= totalPages} onClick={() => setPage(safePage + 1)} aria-label="Next page"><ChevronRight size={15} /></button>
+          </div>
+        </div>
+      )}
 
       {dragging && <div className="explorer-drag-hint" role="status"><FolderInput size={14} /> Drop on a folder or breadcrumb to move {dragCount} {plural(dragCount, 'item')}</div>}
 
