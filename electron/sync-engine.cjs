@@ -653,6 +653,39 @@ class SyncEngine {
         this.store.upsertFile({ relativePath: operation.payload.conflictPath, accountId: provider.accountId, driveFileId: remoteConflict.driveFileId, baselineHash: conflictLocal.hash, sizeBytes: conflictLocal.size, remoteModifiedAt: conflictContent.modifiedAt, localModifiedAt: conflictLocal.modifiedAt, syncState: 'active' })
         await upload({ ...operation, drive_file_id: null }, { newFile: true })
       },
+      'migrate-remote': async (operation) => {
+        const targetProvider = this.#provider(operation.payload.targetAccountId ?? operation.account_id)
+        const local = await snapshotFile(rootPath, operation.relative_path)
+        const remote = await targetProvider.uploadFile({
+          rootFolderId: this.store.getAccount(targetProvider.accountId).root_folder_id,
+          relativePath: operation.relative_path,
+          readable: createReadStream(local.absolutePath),
+          size: local.size,
+          hash: local.hash,
+          driveFileId: null,
+          idempotencyKey: operation.id,
+        })
+        const sourceAccountId = operation.payload.sourceAccountId ?? operation.account_id
+        const sourceDriveFileId = operation.payload.sourceDriveFileId ?? operation.drive_file_id
+        if (sourceDriveFileId && sourceAccountId && sourceAccountId !== targetProvider.accountId) {
+          try {
+            await this.#provider(sourceAccountId).trashFile(sourceDriveFileId)
+          } catch (error) {
+            if (error.code !== 'FILE_NOT_FOUND') throw error
+          }
+        }
+        this.store.upsertFile({
+          relativePath: operation.relative_path,
+          accountId: targetProvider.accountId,
+          driveFileId: remote.driveFileId,
+          baselineHash: local.hash,
+          sizeBytes: local.size,
+          localModifiedAt: local.modifiedAt,
+          remoteModifiedAt: remote.modifiedAt,
+          syncState: 'active',
+        })
+        return remote
+      },
     }
   }
 }
