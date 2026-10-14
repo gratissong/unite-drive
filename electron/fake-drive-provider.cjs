@@ -13,6 +13,7 @@ class FakeDriveProvider {
     this.nextFileNumber = 1
     this.changesCapable = trackChanges
     this.listCalls = 0
+    this.unreadableIds = new Set()
     this._changeSeq = 0
     this._changeLog = []
     for (const file of files) this.seedFile(file)
@@ -32,7 +33,21 @@ class FakeDriveProvider {
     this.listCalls += 1
     return [...this.files.values()]
       .filter((file) => !file.trashed)
-      .map((file) => ({ ...file, rootFolderId: this.rootFolderId }))
+      .map((file) => ({
+        ...file,
+        rootFolderId: this.rootFolderId,
+        ...(this.unreadableIds.has(file.driveFileId) ? { hash: null, unreadable: true } : {}),
+      }))
+  }
+
+  // Simulate Drive listing a file but refusing to return its bytes so the
+  // provider can verify the hash (for example a transient rate limit).
+  markUnreadable(driveFileId) {
+    this.unreadableIds.add(driveFileId)
+  }
+
+  markReadable(driveFileId) {
+    this.unreadableIds.delete(driveFileId)
   }
 
   async uploadFile({ rootFolderId, relativePath, readable, size, hash, driveFileId, idempotencyKey }) {

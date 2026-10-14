@@ -111,12 +111,18 @@ class GoogleDriveProvider {
           } catch {
             continue
           }
-          let hash
+          let hash = null
+          let unreadable = false
           try {
             hash = await this.#resolveContentHash(file, safeRelativePath)
           } catch (error) {
-            if (error.code === 'DRIVE_FILE_ACCESS_REQUIRED') continue
-            throw error
+            if (error.code !== 'DRIVE_FILE_ACCESS_REQUIRED') throw error
+            // Google listed this file but would not return its bytes so we could
+            // verify its hash — usually a transient rate limit while hashing a
+            // large library. Keep it in the listing marked "present but
+            // unverifiable". Dropping it here would make it look like a remote
+            // deletion, and the reconciler would then destroy the local copy.
+            unreadable = true
           }
           files.push({
             accountId: this.accountId,
@@ -124,6 +130,7 @@ class GoogleDriveProvider {
             rootFolderId,
             relativePath: safeRelativePath,
             hash,
+            unreadable,
             size: Number(file.size ?? 0),
             modifiedAt: file.modifiedTime ?? null,
             md5Checksum: file.md5Checksum ?? null,

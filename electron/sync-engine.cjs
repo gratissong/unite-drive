@@ -345,6 +345,12 @@ class SyncEngine {
       }
       const local = localByPath.get(manifest.relative_path)
       const remote = remoteByDriveId.get(manifest.drive_file_id)
+      // A remote that Drive listed but we could not read this cycle is "present,
+      // contents unknown". Acting on it would either destroy the local copy (if
+      // the unknown hash were read as a deletion) or queue a download that
+      // cannot succeed (if it were read as a change), so leave the row alone
+      // until a later cycle can read it.
+      if (remote?.unreadable) continue
       const action = planSyncAction({
         baselineHash: manifest.baseline_hash,
         localExists: Boolean(local),
@@ -375,7 +381,7 @@ class SyncEngine {
       ...allFiles.map((file) => file.relative_path),
     ])
     const untrackedRemote = remoteFiles
-      .filter((file) => !knownDriveIds.has(file.driveFileId))
+      .filter((file) => !knownDriveIds.has(file.driveFileId) && !file.unreadable)
       .map((file) => {
         if (!occupiedPaths.has(file.relativePath)) return file
         const conflictPath = createConflictPath(file.relativePath, file, occupiedPaths)
