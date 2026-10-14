@@ -12,12 +12,14 @@ function normalizeLimit(limitBytes) {
   return Number.isFinite(limit) && limit > 0 ? limit : null
 }
 
-function summarizeAccount(account, usageBytes) {
+function summarizeAccount(account, usageBytes, managedBytes, movableFiles) {
   return {
     id: account.id,
     email: account.email ?? null,
     limitBytes: account.limitBytes,
     usageBytes,
+    managedBytes: managedBytes ?? 0,
+    movableFiles: movableFiles ?? 0,
     fillPercent: account.limitBytes > 0 ? (usageBytes / account.limitBytes) * 100 : 0,
   }
 }
@@ -51,20 +53,26 @@ function planRebalance({ accounts = [], files = [], reservePercent = 5, options 
   const fill = (id) => (usage.get(id) / limits.get(id)) * 100
   const freeBytes = (id) => Math.max(0, limits.get(id) * (1 - reserveRatio) - usage.get(id))
 
-  // A file is movable only when it is fully in sync: an active manifest row that
-  // still points at a Drive file, with a known positive size.
+  // `managedBytes` is everything Unite Drive stores on each account (so the user
+  // can see how much of a drive it can actually influence). `movableByAccount` is
+  // the subset that is fully in sync and can therefore be relocated.
+  const managedByAccount = new Map(finite.map((account) => [account.id, 0]))
   const movableByAccount = new Map(finite.map((account) => [account.id, []]))
   let movableCount = 0
   for (const file of files) {
     if (file.sync_state !== 'active') continue
-    if (!file.account_id || !file.drive_file_id) continue
-    const sizeBytes = Number(file.size_bytes)
-    if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) continue
     const list = movableByAccount.get(file.account_id)
     if (!list) continue
+    const sizeBytes = Number(file.size_bytes)
+    if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) continue
+    managedByAccount.set(file.account_id, managedByAccount.get(file.account_id) + sizeBytes)
+    if (!file.drive_file_id) continue
     list.push({ relativePath: file.relative_path, sizeBytes })
     movableCount += 1
   }
+  const movableInitial = new Map([...movableByAccount].map(([id, list]) => [id, list.length]))
+  const movableRemaining = new Map(movableInitial)
+  const managedInitial = new Map(managedByAccount)
   for (const list of movableByAccount.values()) list.sort((first, second) => second.sizeBytes - first.sizeBytes)
 
   const moves = []
@@ -106,6 +114,9 @@ function planRebalance({ accounts = [], files = [], reservePercent = 5, options 
       const [file] = donorFiles.splice(chosen.fileIndex, 1)
       usage.set(chosen.donor.id, usage.get(chosen.donor.id) - file.sizeBytes)
       usage.set(chosen.receiver.id, usage.get(chosen.receiver.id) + file.sizeBytes)
+      managedByAccount.set(chosen.donor.id, managedByAccount.get(chosen.donor.id) - file.sizeBytes)
+      managedByAccount.set(chosen.receiver.id, managedByAccount.get(chosen.receiver.id) + file.sizeBytes)
+      movableRemaining.set(chosen.donor.id, (movableRemaining.get(chosen.donor.id) ?? 0) - 1)
       moves.push({
         relativePath: file.relativePath,
         fromAccountId: chosen.donor.id,
@@ -119,9 +130,16 @@ function planRebalance({ accounts = [], files = [], reservePercent = 5, options 
     if (Number.isFinite(maxBytes) && totalBytes >= maxBytes) capped = true
   }
 
-  const projected = finite.map((account) => summarizeAccount(account, usage.get(account.id)))
+  const projected = finite.map((account) =>
+    summarizeAccount(account, usage.get(account.id), managedByAccount.get(account.id), movableRemaining.get(account.id)),
+  )
   const fills = projected.map((account) => account.fillPercent)
   const balanced = fills.length < 2 || Math.max(...fills) - Math.min(...fills) <= thresholdPercent
+
+  // Accounts that cannot supply any file (no movable content) are reported so the
+  // UI can explain why a nearly-full drive is not being drained. Caught up front:
+  // `movableInitial` is the count before any move was applied.
+  const blockedAccountIds = finite.filter((account) => (movableInitial.get(account.id) ?? 0) === 0).map((account) => account.id)
 
   return {
     moves,
@@ -130,7 +148,10 @@ function planRebalance({ accounts = [], files = [], reservePercent = 5, options 
     thresholdPercent,
     capped,
     balanced,
-    accounts: finite.map((account) => summarizeAccount(account, account.usageBytes)),
+    blockedAccountIds,
+    accounts: finite.map((account) =>
+      summarizeAccount(account, account.usageBytes, managedInitial.get(account.id), movableInitial.get(account.id)),
+    ),
     projected,
   }
 }

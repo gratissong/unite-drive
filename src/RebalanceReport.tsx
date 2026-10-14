@@ -17,6 +17,8 @@ type RebalanceAccount = {
   email: string | null
   limitBytes: number
   usageBytes: number
+  managedBytes: number
+  movableFiles: number
   fillPercent: number
 }
 
@@ -36,6 +38,7 @@ type RebalancePlan = {
   thresholdPercent: number
   capped: boolean
   balanced: boolean
+  blockedAccountIds: string[]
   accounts: RebalanceAccount[]
   projected: RebalanceAccount[]
 }
@@ -71,9 +74,17 @@ const capOptions: Array<{ value: string; label: string }> = [
 function demoPlan(accounts: DriveAccount[]): RebalancePlan {
   const finite = accounts
     .filter((account) => account.quota > 0)
-    .map((account) => ({ id: account.id, email: account.email, limitBytes: account.quota, usageBytes: account.used, fillPercent: (account.used / account.quota) * 100 }))
+    .map((account) => ({
+      id: account.id,
+      email: account.email,
+      limitBytes: account.quota,
+      usageBytes: account.used,
+      managedBytes: Math.round(account.used * 0.45),
+      movableFiles: 40,
+      fillPercent: (account.used / account.quota) * 100,
+    }))
     .sort((first, second) => second.fillPercent - first.fillPercent)
-  if (finite.length < 2) return { applied: false, queued: 0, moves: [], totalBytes: 0, totalFiles: 0, thresholdPercent: 5, capped: false, balanced: true, accounts: finite, projected: finite }
+  if (finite.length < 2) return { applied: false, queued: 0, moves: [], totalBytes: 0, totalFiles: 0, thresholdPercent: 5, capped: false, balanced: true, blockedAccountIds: [], accounts: finite, projected: finite }
   const fullest = finite[0]
   const emptiest = finite[finite.length - 1]
   const share = Math.min(fullest.usageBytes * 0.6, 6.4 * gib)
@@ -88,7 +99,7 @@ function demoPlan(accounts: DriveAccount[]): RebalancePlan {
     const usageBytes = Math.max(0, account.usageBytes + delta)
     return { ...account, usageBytes, fillPercent: (usageBytes / account.limitBytes) * 100 }
   })
-  return { applied: false, queued: 0, moves, totalBytes, totalFiles: moves.length, thresholdPercent: 5, capped: false, balanced: false, accounts: finite, projected }
+  return { applied: false, queued: 0, moves, totalBytes, totalFiles: moves.length, thresholdPercent: 5, capped: false, balanced: false, blockedAccountIds: [], accounts: finite, projected }
 }
 
 function RebalanceReport({ accounts, isDemoData, applying, onRebalance }: Props) {
@@ -163,19 +174,31 @@ function RebalanceReport({ accounts, isDemoData, applying, onRebalance }: Props)
     if (applied) recalculate()
   }
 
+  const fullestAccount = effectivePlan && effectivePlan.accounts.length
+    ? [...effectivePlan.accounts].sort((first, second) => second.fillPercent - first.fillPercent)[0]
+    : undefined
+  const fullestName = fullestAccount ? metaFor(fullestAccount).name : ''
+  const fullestIsBlocked = Boolean(effectivePlan && fullestAccount && effectivePlan.blockedAccountIds.includes(fullestAccount.id))
+
   let summary
+  let emptyState = ''
   if (isDemoData) {
     summary = 'This sample plan shows how files would spread across your drives. Connect real Google accounts to see and apply an actual rebalance.'
   } else if (showLoading && !effectivePlan) {
     summary = 'Reading each drive’s usage to find the best way to even them out…'
   } else if (!effectivePlan || effectivePlan.accounts.length < 2) {
     summary = 'Connect at least two Google Drive accounts with a fixed quota to move files between them.'
-  } else if (effectivePlan.totalFiles === 0) {
-    summary = effectivePlan.balanced
-      ? `Your drives are already balanced within ${effectivePlan.thresholdPercent}% of each other.`
-      : 'No synced file can be moved without pushing another drive past its reserve. Add a drive with more room, or lower the reserve in Settings.'
-  } else {
+  } else if (effectivePlan.totalFiles > 0) {
     summary = `Moving ${formatBytes(effectivePlan.totalBytes)} from fuller drives to emptier ones would bring every drive within about ${effectivePlan.thresholdPercent}% of each other.`
+  } else if (!effectivePlan.balanced && fullestIsBlocked && fullestAccount) {
+    summary = `${fullestName} is ${Math.round(fullestAccount.fillPercent)}% full, but Unite Drive has no files there to move. Its space is used by Gmail, Google Photos, or files outside your sync folder — rebalancing can only relocate files inside your sync folder.`
+    emptyState = `${fullestName} has no Unite Drive files to relocate, so its usage can't be rebalanced.`
+  } else if (!effectivePlan.balanced) {
+    summary = 'No synced file can be moved without pushing another drive past its reserve. Add a drive with more room, or lower the reserve in Settings.'
+    emptyState = 'No file can be moved right now without overfilling a drive.'
+  } else {
+    summary = `Your drives are already balanced within ${effectivePlan.thresholdPercent}% of each other.`
+    emptyState = 'Your drives are already balanced — nothing needs to move.'
   }
 
   return (
@@ -200,8 +223,9 @@ function RebalanceReport({ accounts, isDemoData, applying, onRebalance }: Props)
               const meta = metaFor(account)
               const projected = effectivePlan.projected.find((item) => item.id === account.id) ?? account
               const trend = projected.fillPercent < account.fillPercent - 0.5 ? 'down' : projected.fillPercent > account.fillPercent + 0.5 ? 'up' : ''
+              const blocked = fullestIsBlocked && account.id === fullestAccount?.id
               return (
-                <article className="rebalance-drive" key={account.id}>
+                <article className={`rebalance-drive${blocked ? ' blocked' : ''}`} key={account.id}>
                   <div className="rebalance-drive-head">
                     <span className={`account-avatar ${meta.color}`}>{meta.initials}</span>
                     <div className="rebalance-drive-id"><strong>{meta.name}</strong><span>{meta.email}</span></div>
@@ -211,6 +235,12 @@ function RebalanceReport({ accounts, isDemoData, applying, onRebalance }: Props)
                   <div className="rebalance-drive-meta">
                     <span>{formatBytes(account.usageBytes)} of {formatBytes(account.limitBytes)} used</span>
                     <span className={`rebalance-trend ${trend}`}>{Math.round(projected.fillPercent)}% after</span>
+                  </div>
+                  <div className="rebalance-drive-managed">
+                    {account.movableFiles > 0
+                      ? `Unite manages ${formatBytes(account.managedBytes)} · ${account.movableFiles} movable`
+                      : `Unite manages ${formatBytes(account.managedBytes)}`}
+                    {blocked && <span className="rebalance-flag">nothing to move</span>}
                   </div>
                 </article>
               )
@@ -228,7 +258,7 @@ function RebalanceReport({ accounts, isDemoData, applying, onRebalance }: Props)
           </div>
 
           {effectivePlan.moves.length === 0 ? (
-            <div className="dedup-empty"><Check size={18} /><p>{effectivePlan.balanced ? 'Your drives are already balanced — nothing needs to move.' : 'No file can be moved right now without overfilling a drive.'}</p></div>
+            <div className="dedup-empty"><Check size={18} /><p>{emptyState}</p></div>
           ) : (
             <div className="rebalance-routes">
               <div className="rebalance-routes-head">
@@ -238,8 +268,8 @@ function RebalanceReport({ accounts, isDemoData, applying, onRebalance }: Props)
                 {routes.map((route) => {
                   const fromAccount = effectivePlan.accounts.find((item) => item.id === route.fromAccountId)
                   const toAccount = effectivePlan.accounts.find((item) => item.id === route.toAccountId)
-                  const from = metaFor(fromAccount ?? { id: route.fromAccountId, email: null, limitBytes: 0, usageBytes: 0, fillPercent: 0 })
-                  const to = metaFor(toAccount ?? { id: route.toAccountId, email: null, limitBytes: 0, usageBytes: 0, fillPercent: 0 })
+                  const from = metaFor(fromAccount ?? { id: route.fromAccountId, email: null, limitBytes: 0, usageBytes: 0, managedBytes: 0, movableFiles: 0, fillPercent: 0 })
+                  const to = metaFor(toAccount ?? { id: route.toAccountId, email: null, limitBytes: 0, usageBytes: 0, managedBytes: 0, movableFiles: 0, fillPercent: 0 })
                   return (
                     <li className="rebalance-route" key={route.key}>
                       <span className="rebalance-route-files" title={route.samples.join(', ')}>

@@ -375,6 +375,9 @@ h1, h2 { font-family: 'Manrope', 'Segoe UI', sans-serif; color: var(--ink); }
 .rebalance-trend { color: #98a096; font-weight: 600; white-space: nowrap; }
 .rebalance-trend.down { color: #4c7d5d; }
 .rebalance-trend.up { color: #a36f37; }
+.rebalance-drive-managed { display: flex; align-items: center; gap: 6px; margin-top: 7px; color: #98a096; font-size: 9px; }
+.rebalance-drive.blocked { border-color: #ecdcc4; background: #fffbf4; }
+.rebalance-flag { padding: 2px 6px; border-radius: 4px; background: #f6e7cf; color: #a3762f; font-size: 8px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; }
 .rebalance-controls { display: flex; align-items: flex-end; gap: 10px; margin-bottom: 14px; }
 .rebalance-cap { display: flex; flex-direction: column; gap: 5px; color: #566157; font-size: 10px; font-weight: 600; }
 .rebalance-cap select { min-width: 150px; min-height: 32px; padding: 0 9px; border: 1px solid #dfe4dc; border-radius: 5px; background: #fff; color: #435047; font-size: 10px; }

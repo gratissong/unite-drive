@@ -130,6 +130,28 @@ test('redistributes across more than two drives', () => {
   assert.deepEqual(new Set(plan.moves.map((move) => move.toAccountId)), new Set(['b', 'c']))
 })
 
+test('reports managed space and flags drives that have nothing to move', () => {
+  const plan = planRebalance({
+    accounts: [account('full', 90), account('sparse', 10), account('empty', 0)],
+    files: [
+      file('a.bin', 'sparse', 10),
+      { relative_path: 'orphan.bin', account_id: 'sparse', drive_file_id: null, size_bytes: 10, baseline_hash: 'h', sync_state: 'active' },
+    ],
+  })
+
+  const full = plan.accounts.find((item) => item.id === 'full')
+  const sparse = plan.accounts.find((item) => item.id === 'sparse')
+  assert.equal(full.managedBytes, 0)
+  assert.equal(full.movableFiles, 0)
+  // Both active files count as managed space, but only the one with a Drive file
+  // id can actually be relocated.
+  assert.equal(sparse.managedBytes, 20)
+  assert.equal(sparse.movableFiles, 1)
+  assert.equal(plan.blockedAccountIds.includes('full'), true)
+  assert.equal(plan.blockedAccountIds.includes('empty'), true)
+  assert.equal(plan.blockedAccountIds.includes('sparse'), false)
+})
+
 test('reports a plan with no accounts gracefully', () => {
   const plan = planRebalance({ accounts: [], files: [] })
   assert.deepEqual(plan.moves, [])

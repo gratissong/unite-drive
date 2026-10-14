@@ -98,6 +98,8 @@ type RebalanceAccount = {
   email: string | null
   limitBytes: number
   usageBytes: number
+  managedBytes: number
+  movableFiles: number
   fillPercent: number
 }
 
@@ -117,6 +119,7 @@ type RebalancePlan = {
   thresholdPercent: number
   capped: boolean
   balanced: boolean
+  blockedAccountIds: string[]
   accounts: RebalanceAccount[]
   projected: RebalanceAccount[]
 }

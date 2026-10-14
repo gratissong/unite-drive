@@ -34,6 +34,7 @@ When one account is nearly full and another has room — for example right after
 - Each file is copied to the target account from the local sync folder and checked against Google's checksum, then the source copy is **permanently deleted**. Google Drive's trash still counts against your quota, so trashing the source would not free space right away. Nothing is lost: the file still exists on the new drive and in your local folder.
 - Moves are ordinary queued transfers, so they appear in **Transfers**, retry on temporary errors, and can be cancelled before they start. The local copy and the manifest mapping are updated only after the new copy is stored.
 - A file that changed locally after the plan was built is left where it is and reconciled by the next normal sync. Accounts reporting an unmetered (unlimited) quota are not part of the balancing.
+- Only files Unite Drive manages can move. If a nearly-full drive's space is used by Gmail, Google Photos, or files outside your sync folder, rebalancing can't free it — the panel flags that drive and tells you how much space Unite Drive manages on it.
 
 ## Sync safety behavior
 
