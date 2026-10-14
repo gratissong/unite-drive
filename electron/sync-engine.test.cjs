@@ -496,6 +496,68 @@ test('renames every file when a whole local folder is moved, preserving Drive id
   })
 })
 
+test('retires a deleted file without discarding its Drive identity', async () => {
+  const provider = drive('drive-a', { trackChanges: true })
+  provider.seedFile({ relativePath: 'a.txt', content: 'content' })
+  await withEngine({ providers: [provider] }, async ({ rootPath, engine, store }) => {
+    await engine.syncOnce()
+    const active = store.getFile('a.txt')
+    await fs.promises.unlink(path.join(rootPath, 'a.txt'))
+
+    await engine.syncOnce()
+
+    const retired = store.getFile('a.txt')
+    assert.equal(retired.sync_state, 'tombstone')
+    assert.equal(retired.drive_file_id, active.drive_file_id)
+    assert.equal(retired.baseline_hash, active.baseline_hash)
+  })
+})
+
+test('never re-downloads a deleted file whose retired row still points at a live Drive copy', async () => {
+  const provider = drive('drive-a', { trackChanges: true })
+  const seeded = provider.seedFile({ relativePath: 'photo.png', content: 'photo bytes' })
+  await withEngine({ providers: [provider] }, async ({ rootPath, engine, store }) => {
+    await engine.syncOnce()
+    assert.equal(store.getFile('photo.png').sync_state, 'active')
+    await fs.promises.rm(path.join(rootPath, 'photo.png'))
+
+    // The exact state a mis-aimed `trash-local` used to leave behind: the row is
+    // retired and its baseline was blanked, but the Drive copy is still live.
+    store.upsertFile({
+      relativePath: 'photo.png',
+      accountId: seeded.accountId,
+      driveFileId: seeded.driveFileId,
+      syncState: 'tombstone',
+      deletedAt: new Date().toISOString(),
+    })
+
+    const idle = await engine.syncOnce()
+    assert.equal(idle.actionsQueued, 0)
+    assert.equal(provider.listCalls, 1) // no re-list, so the fast path is exercised
+    assert.equal(fs.existsSync(path.join(rootPath, 'photo.png')), false)
+    assert.equal(store.getFile('photo.png').sync_state, 'tombstone')
+    assert.equal((await provider.listManagedFiles(provider.rootFolderId)).length, 1)
+  })
+})
+
+test('a local rename retires the old path without duplicating the Drive file id', async () => {
+  const provider = drive('drive-a')
+  await withEngine({ localFiles: { 'docs/notes.txt': 'content' }, providers: [provider] }, async ({ rootPath, engine, store }) => {
+    await engine.syncOnce()
+    const original = (await provider.listManagedFiles(provider.rootFolderId))[0]
+
+    await fs.promises.mkdir(path.join(rootPath, 'archive'))
+    await fs.promises.rename(path.join(rootPath, 'docs', 'notes.txt'), path.join(rootPath, 'archive', 'notes-moved.txt'))
+    await engine.syncOnce()
+
+    const driveIds = store.listFiles().map((file) => file.drive_file_id).filter(Boolean)
+    assert.equal(new Set(driveIds).size, driveIds.length, 'each Drive file id must belong to exactly one row')
+    assert.equal(store.getFile('archive/notes-moved.txt').drive_file_id, original.driveFileId)
+    assert.equal(store.getFile('docs/notes.txt').drive_file_id, null)
+    assert.match(store.getFile('docs/notes.txt').sync_state, /forgotten/)
+  })
+})
+
 test('does not treat an ambiguous identical copy as a rename', async () => {
   const provider = drive('drive-a')
   await withEngine({ localFiles: { 'keep.txt': 'same' }, providers: [provider] }, async ({ rootPath, engine, store }) => {

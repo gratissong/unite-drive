@@ -21,6 +21,15 @@ function manifestToRecord(manifest) {
   }
 }
 
+// Retire a row after its local and/or Drive copy is removed. The Drive file id
+// and baseline hash are carried over so the row still identifies the file it
+// used to represent; the incremental reconciler skips retired rows entirely, so
+// a nulled-out row is never needed to stop a resurrection.
+function tombstoneRecord(previous, fallback) {
+  const base = previous ? manifestToRecord(previous) : fallback
+  return { ...base, syncState: 'tombstone', deletedAt: new Date().toISOString() }
+}
+
 class SyncEngine {
   constructor({ rootPath, store, providers, settings, trashLocal, runnerOptions }) {
     this.rootPath = rootPath
@@ -207,13 +216,11 @@ class SyncEngine {
         }
       }
       if (tracked) {
-        this.store.upsertFile({
+        this.store.upsertFile(tombstoneRecord(tracked, {
           relativePath,
           accountId: tracked.account_id,
           driveFileId: tracked.drive_file_id,
-          syncState: 'tombstone',
-          deletedAt: new Date().toISOString(),
-        })
+        }))
       }
       removed.push(relativePath)
     }
@@ -275,9 +282,15 @@ class SyncEngine {
   }
 
   async #queueIncrementalSync(rootPath, roots) {
-    const manifests = this.store.listFiles().filter((file) => file.sync_state !== 'forgotten')
+    // Only `active` rows describe a file we still track. `tombstone` (deleted)
+    // and `forgotten` (retired by a rename) rows are bookkeeping only; feeding
+    // them back into the planner re-imports files that were deliberately removed.
+    const allFiles = this.store.listFiles()
+    const manifests = allFiles.filter((file) => file.sync_state === 'active')
     const manifestByPath = new Map(manifests.map((file) => [file.relative_path, file]))
-    const manifestByDriveId = new Set(manifests.map((file) => file.drive_file_id).filter(Boolean))
+    // Every Drive file id we have ever tracked stays "known" so the still-live
+    // Drive copy behind a retired row is never adopted or re-downloaded.
+    const knownDriveIds = new Set(allFiles.map((file) => file.drive_file_id).filter(Boolean))
     const localFiles = await scanSyncRoot(rootPath)
     const localByPath = new Map(localFiles.map((file) => [file.relativePath, file]))
     const renames = this.#detectLocalRenames(manifests, localByPath)
@@ -359,10 +372,10 @@ class SyncEngine {
     const untrackedLocal = localFiles.filter((file) => !manifestByPath.has(file.relativePath) && !claimedNew.has(file.relativePath))
     const occupiedPaths = new Set([
       ...localFiles.map((file) => file.relativePath),
-      ...manifests.map((file) => file.relative_path),
+      ...allFiles.map((file) => file.relative_path),
     ])
     const untrackedRemote = remoteFiles
-      .filter((file) => !manifestByDriveId.has(file.driveFileId))
+      .filter((file) => !knownDriveIds.has(file.driveFileId))
       .map((file) => {
         if (!occupiedPaths.has(file.relativePath)) return file
         const conflictPath = createConflictPath(file.relativePath, file, occupiedPaths)
@@ -662,11 +675,14 @@ class SyncEngine {
         if (sourcePath && sourcePath !== operation.payload.destinationPath) {
           const previous = this.store.getFile(sourcePath)
           if (previous) {
+            // The Drive file now belongs to the destination row. Retire the old
+            // path without leaving a second row pointing at the same Drive file
+            // id, which would make the manifest report one file twice.
             this.store.upsertFile({
               relativePath: sourcePath,
               accountId: previous.account_id,
-              driveFileId: previous.drive_file_id,
-              baselineHash: previous.baseline_hash,
+              driveFileId: null,
+              baselineHash: null,
               sizeBytes: previous.size_bytes,
               localModifiedAt: previous.local_modified_at,
               remoteModifiedAt: previous.remote_modified_at,
@@ -678,7 +694,8 @@ class SyncEngine {
       },
       'trash-remote': async (operation) => {
         await this.#provider(operation.account_id).trashFile(operation.drive_file_id)
-        this.store.upsertFile({ relativePath: operation.payload.sourcePath ?? operation.relative_path, accountId: operation.account_id, driveFileId: operation.drive_file_id, syncState: 'tombstone', deletedAt: new Date().toISOString() })
+        const relativePath = operation.payload.sourcePath ?? operation.relative_path
+        this.store.upsertFile(tombstoneRecord(this.store.getFile(relativePath), { relativePath, accountId: operation.account_id, driveFileId: operation.drive_file_id }))
       },
       'trash-local': async (operation) => {
         try {
@@ -686,7 +703,7 @@ class SyncEngine {
         } catch (error) {
           if (error.code !== 'ENOENT') throw error
         }
-        this.store.upsertFile({ relativePath: operation.relative_path, accountId: operation.account_id, driveFileId: operation.drive_file_id, syncState: 'tombstone', deletedAt: new Date().toISOString() })
+        this.store.upsertFile(tombstoneRecord(this.store.getFile(operation.relative_path), { relativePath: operation.relative_path, accountId: operation.account_id, driveFileId: operation.drive_file_id }))
       },
       'restore-local': async (operation) => {
         const provider = this.#provider(operation.account_id)
