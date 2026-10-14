@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Copy, FileArchive, HardDrive, Sparkles } from 'lucide-react'
 import type { DuplicateFile, DuplicateGroup } from './dedup'
+import { useConfirm } from './confirm'
 
 type Props = {
   groups: DuplicateGroup[]
@@ -19,6 +20,7 @@ function formatBytes(bytes: number) {
 }
 
 function DedupeReport({ groups, isDemoData, applying, onApplyDedupe }: Props) {
+  const confirm = useConfirm()
   const [keepers, setKeepers] = useState<Record<string, string>>({})
   const totalWaste = groups.reduce((total, group) => total + group.wasteBytes, 0)
   const clusters = groups.length
@@ -27,15 +29,17 @@ function DedupeReport({ groups, isDemoData, applying, onApplyDedupe }: Props) {
   const keeperFor = (group: DuplicateGroup) => keepers[groupKey(group)] ?? group.keeperPath
   const pickKeeper = (group: DuplicateGroup, path: string) => setKeepers((current) => ({ ...current, [groupKey(group)]: path }))
 
-  function handleDelete(group: DuplicateGroup, file: DuplicateFile) {
+  async function handleDelete(group: DuplicateGroup, file: DuplicateFile) {
     if (file.path === keeperFor(group) || applying || isDemoData) return
     const name = file.path.split('/').at(-1) || file.path
     const keeper = keeperFor(group)
-    const confirmed = window.confirm(
-      `Delete this duplicate copy?\n\n` +
-        `"${name}" moves to your Recycle Bin and to Google Drive's trash (both recoverable).\n` +
-        `The keeper "${keeper}" stays unchanged.`,
-    )
+    const confirmed = await confirm({
+      tone: 'danger',
+      eyebrow: 'DELETE DUPLICATE COPY',
+      title: `Delete this copy of “${name}”?`,
+      message: `“${name}” moves to your Recycle Bin and to Google Drive's trash — both recoverable. The keeper “${keeper}” stays unchanged.`,
+      confirmLabel: 'Delete copy',
+    })
     if (confirmed) onApplyDedupe([{ relativePath: file.path }])
   }
 
@@ -94,7 +98,7 @@ function DedupeReport({ groups, isDemoData, applying, onApplyDedupe }: Props) {
                             type="button"
                             className="copy-action copy-delete"
                             disabled={applying || isDemoData || isKeeper}
-                            onClick={() => handleDelete(group, file)}
+                            onClick={() => { void handleDelete(group, file) }}
                             title={isKeeper ? 'This is the keeper — pick Keep on another copy to change it' : 'Delete this copy'}
                           >
                             Delete

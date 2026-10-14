@@ -21,6 +21,7 @@ import {
   Upload,
   X,
 } from 'lucide-react'
+import { useConfirm } from './confirm'
 
 type FsEntry = {
   name: string
@@ -100,6 +101,7 @@ function syncTone(state: string | null | undefined) {
 
 export default function ExplorerTab({ onNotify, focus }: { onNotify?: (message: string) => void; focus?: { path: string; nonce: number } | null }) {
   const bridge = window.uniteDrive
+  const confirm = useConfirm()
   // When opened from the search palette, start in the matching item's folder
   // with its name filtered so the row is visible and highlighted.
   const initialFocus = (() => {
@@ -268,9 +270,16 @@ export default function ExplorerTab({ onNotify, focus }: { onNotify?: (message: 
     setEditing(null)
   }
 
-  const requestDelete = (name: string) => {
+  const requestDelete = async (name: string) => {
     const target = childPath(segments, name)
-    if (!window.confirm(`Move "${name}" to the Recycle Bin? Its cloud copy will follow your deletion policy.`)) return
+    const confirmed = await confirm({
+      tone: 'danger',
+      eyebrow: 'MOVE TO RECYCLE BIN',
+      title: `Move “${name}” to the Recycle Bin?`,
+      message: 'Its cloud copy will follow your deletion policy. You can restore it from the Recycle Bin.',
+      confirmLabel: 'Move to Recycle Bin',
+    })
+    if (!confirmed) return
     runMutation(() => bridge!.trashPath(target), `Moved "${name}" to the Recycle Bin.`)
   }
 
@@ -400,10 +409,19 @@ export default function ExplorerTab({ onNotify, focus }: { onNotify?: (message: 
     },
   })
 
-  const deleteSelected = () => {
+  const deleteSelected = async () => {
     if (!selectedTargets.length) return
     const label = selectedTargets.length === 1 ? `"${selectedTargets[0].name}"` : `${selectedTargets.length} items`
-    if (!window.confirm(`Move ${label} to the Recycle Bin? Their cloud copies will follow your deletion policy.`)) return
+    const confirmed = await confirm({
+      tone: 'danger',
+      eyebrow: 'MOVE TO RECYCLE BIN',
+      title: `Move ${label} to the Recycle Bin?`,
+      message: selectedTargets.length === 1
+        ? 'Its cloud copy will follow your deletion policy. You can restore it from the Recycle Bin.'
+        : 'Their cloud copies will follow your deletion policy. You can restore them from the Recycle Bin.',
+      confirmLabel: 'Move to Recycle Bin',
+    })
+    if (!confirmed) return
     const paths = selectedTargets.map((target) => target.path)
     void (async () => {
       try {
@@ -456,7 +474,7 @@ export default function ExplorerTab({ onNotify, focus }: { onNotify?: (message: 
           <SquareCheck size={15} />
           <span><strong>{selected.size}</strong> selected</span>
           <button className="button button-primary" onClick={() => setMoving(selectedTargets)}><FolderInput size={14} /> Move…</button>
-          <button className="button button-secondary" onClick={deleteSelected}><Trash2 size={14} /> Delete</button>
+          <button className="button button-secondary" onClick={() => { void deleteSelected() }}><Trash2 size={14} /> Delete</button>
           <span className="explorer-selection-spacer" />
           <span className="explorer-selection-hint">Drag onto a folder or breadcrumb to move</span>
           <button className="text-button" onClick={clearSelection}>Clear</button>
@@ -529,7 +547,7 @@ export default function ExplorerTab({ onNotify, focus }: { onNotify?: (message: 
                 <button title="Rename" aria-label={`Rename ${entry.name}`} onClick={() => startRename(entry.name)}><Pencil size={14} /></button>
                 <button title="Move" aria-label={`Move ${entry.name}`} onClick={() => setMoving([{ name: entry.name, isDirectory: entry.isDirectory, path: childPath(segments, entry.name) }])}><FolderInput size={14} /></button>
                 <button title="Reveal in Explorer" aria-label={`Reveal ${entry.name}`} onClick={() => reveal(entry.name)}><ArrowUpRight size={14} /></button>
-                <button className="explorer-remove" title="Move to Recycle Bin" aria-label={`Delete ${entry.name}`} onClick={() => requestDelete(entry.name)}><Trash2 size={14} /></button>
+                <button className="explorer-remove" title="Move to Recycle Bin" aria-label={`Delete ${entry.name}`} onClick={() => { void requestDelete(entry.name) }}><Trash2 size={14} /></button>
               </span>
             </div>
           )
