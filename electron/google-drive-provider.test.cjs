@@ -189,7 +189,7 @@ test('rehashes remotely edited binary content and updates its cached hash', asyn
   assert.equal(api.filesById.get('edited').appProperties.md5, md5)
 })
 
-test('skips an added file it cannot read instead of failing the whole listing', async () => {
+test('keeps a listed-but-unreadable file in the listing instead of dropping it', async () => {
   for (const status of [403, 404]) {
     const api = makeGoogleApi()
     const drive = provider(api)
@@ -203,8 +203,13 @@ test('skips an added file it cannot read instead of failing the whole listing', 
     }
 
     const files = await drive.listManagedFiles(root.rootFolderId)
-    assert.equal(files.length, 1)
-    assert.equal(files[0].relativePath, 'ok.txt')
+    // The unreadable file is still reported (as present but unverifiable) rather
+    // than silently omitted, so a reconcile can never mistake it for a deletion.
+    assert.deepEqual(files.map((file) => file.relativePath).sort(), ['added.txt', 'ok.txt'])
+    const unreadable = files.find((file) => file.driveFileId === 'manual-private')
+    assert.equal(unreadable.unreadable, true)
+    assert.equal(unreadable.hash, null)
+    assert.equal(files.find((file) => file.driveFileId === 'readable-file').unreadable, false)
   }
 })
 

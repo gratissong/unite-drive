@@ -540,6 +540,32 @@ test('never re-downloads a deleted file whose retired row still points at a live
   })
 })
 
+test('does not delete or re-download a local file when Drive lists it but cannot read it', async () => {
+  const provider = drive('drive-a')
+  const seeded = provider.seedFile({ relativePath: 'video.mp4', content: 'video bytes' })
+  await withEngine({ providers: [provider] }, async ({ rootPath, engine, store }) => {
+    await engine.syncOnce()
+    assert.equal(store.getFile('video.mp4').sync_state, 'active')
+
+    // Drive still lists the file, but this cycle it cannot return the bytes to
+    // verify the hash. The engine must neither read the unknown hash as a change
+    // nor the missing bytes as a remote deletion.
+    provider.markUnreadable(seeded.driveFileId)
+    const result = await engine.syncOnce()
+
+    assert.equal(result.actionsQueued, 0)
+    assert.equal(result.failed, 0)
+    assert.equal(fs.existsSync(path.join(rootPath, 'video.mp4')), true)
+    assert.equal(await fs.promises.readFile(path.join(rootPath, 'video.mp4'), 'utf8'), 'video bytes')
+    assert.equal(store.getFile('video.mp4').sync_state, 'active')
+
+    // Once Drive can read it again the row reconciles normally.
+    provider.markReadable(seeded.driveFileId)
+    assert.equal((await engine.syncOnce()).actionsQueued, 0)
+    assert.equal(store.getFile('video.mp4').sync_state, 'active')
+  })
+})
+
 test('a local rename retires the old path without duplicating the Drive file id', async () => {
   const provider = drive('drive-a')
   await withEngine({ localFiles: { 'docs/notes.txt': 'content' }, providers: [provider] }, async ({ rootPath, engine, store }) => {
