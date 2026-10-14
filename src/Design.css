@@ -436,6 +436,7 @@ h1, h2 { font-family: 'Manrope', 'Segoe UI', sans-serif; color: var(--ink); }
 .button-danger { background: #b3261e; color: #fff; box-shadow: 0 2px 5px #7a1c1620; }
 .button-danger:hover { background: #99201a; }
 .modal-icon.danger { background: #fbe9e7; color: #b3261e; }
+.modal-icon.warning { background: #fbf1de; color: #997344; }
 .modal-confirm-actions { display: flex; gap: 8px; margin-top: 18px; }
 .modal-confirm-actions .button { flex: 1; }
 .sync-enable-row { border-top: 1px solid #edf0eb; }
@@ -506,6 +507,9 @@ h1, h2 { font-family: 'Manrope', 'Segoe UI', sans-serif; color: var(--ink); }
 .modal-checklist span { display: flex; align-items: center; gap: 8px; }.modal-checklist svg { color: #5e8a68; }
 .modal-action { width: 100%; margin-top: 18px; }
 .modal-footnote { display: flex; align-items: center; justify-content: center; gap: 5px; margin-top: 12px; color: #92998f; font-size: 9px; }
+.confirm-backdrop { z-index: 80; }
+.confirm-dialog { width: min(100%, 430px); }
+.confirm-dialog .confirm-copy { white-space: pre-line; }
 .toast { position: fixed; z-index: 12; right: 22px; bottom: 20px; display: flex; align-items: center; gap: 9px; max-width: min(480px, calc(100vw - 32px)); padding: 11px 12px; border: 1px solid #dfe6dc; border-radius: 6px; background: #fff; box-shadow: 0 8px 30px #1e34251c; color: #536054; font-size: 10px; animation: rise-in .2s ease-out; }
 .toast-mark { display: grid; place-items: center; width: 21px; height: 21px; flex: 0 0 auto; border-radius: 50%; background: #e9f3eb; color: #51805b; }
 .toast button { display: grid; place-items: center; width: 23px; height: 23px; flex: 0 0 auto; margin-left: auto; border: 0; border-radius: 4px; background: transparent; color: #8b9289; cursor: pointer; }

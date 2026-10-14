@@ -41,6 +41,7 @@ import { buildDuplicateGroups, type DuplicateGroup } from './dedup'
 import SimilarReport from './SimilarReport'
 import { demoSimilarGroups, mapSimilarGroups, type SimilarGroup } from './similar'
 import ExplorerTab from './ExplorerTab'
+import { useConfirm } from './confirm'
 
 type ConflictPolicy = 'keep-both' | 'prefer-local' | 'prefer-remote'
 type DeletionPolicy = 'propagate-to-trash' | 'keep-other-copy'
@@ -244,6 +245,7 @@ function nameInitials(name: string) {
 }
 
 function App() {
+  const confirm = useConfirm()
   const [page, setPage] = useState<Page>('Overview')
   const [accounts, setAccounts] = useState(initialAccounts)
   const [isDemoData, setIsDemoData] = useState(!window.uniteDrive)
@@ -849,7 +851,13 @@ function App() {
       notify('info', 'Sync state reset is available in the Windows desktop app.')
       return
     }
-    if (!window.confirm('Clear local sync mappings and queued work? Files in Google Drive will not be deleted.')) return
+    if (!(await confirm({
+      tone: 'danger',
+      eyebrow: 'RESET SYNC STATE',
+      title: 'Clear local sync state?',
+      message: 'Unite Drive will forget the local-to-Drive file mappings and clear queued transfers on this device. Files already in Google Drive are left untouched.',
+      confirmLabel: 'Reset sync state',
+    }))) return
     try {
       await window.uniteDrive.resetSyncState()
       notify('success', 'Local sync state reset. Drive files were left unchanged.')

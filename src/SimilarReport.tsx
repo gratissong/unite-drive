@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Copy, Image, Sparkles, X } from 'lucide-react'
 import type { SimilarFile, SimilarGroup } from './similar'
+import { useConfirm } from './confirm'
 
 type Props = {
   groups: SimilarGroup[]
@@ -21,6 +22,7 @@ function formatBytes(bytes: number) {
 }
 
 function SimilarReport({ groups, isDemoData, loading, error, applying, onApplyDedupe }: Props) {
+  const confirm = useConfirm()
   const [keepers, setKeepers] = useState<Record<string, string>>({})
   const [compareIndex, setCompareIndex] = useState<number | null>(null)
 
@@ -30,15 +32,17 @@ function SimilarReport({ groups, isDemoData, loading, error, applying, onApplyDe
 
   const totalWaste = groups.reduce((total, group) => total + group.wasteBytes, 0)
 
-  function handleDelete(group: SimilarGroup, file: SimilarFile) {
+  async function handleDelete(group: SimilarGroup, file: SimilarFile) {
     if (file.path === keeperFor(group) || applying || isDemoData) return
     const name = file.path.split('/').at(-1) || file.path
     const keeper = keeperFor(group)
-    const confirmed = window.confirm(
-      `Delete this similar copy?\n\n` +
-        `"${name}" moves to your Recycle Bin and to Google Drive's trash (both recoverable).\n` +
-        `The keeper "${keeper}" stays unchanged.`,
-    )
+    const confirmed = await confirm({
+      tone: 'danger',
+      eyebrow: 'DELETE SIMILAR COPY',
+      title: `Delete this copy of “${name}”?`,
+      message: `“${name}” moves to your Recycle Bin and to Google Drive's trash — both recoverable. The keeper “${keeper}” stays unchanged.`,
+      confirmLabel: 'Delete copy',
+    })
     if (confirmed) onApplyDedupe([{ relativePath: file.path }])
   }
 
@@ -115,7 +119,7 @@ function SimilarReport({ groups, isDemoData, loading, error, applying, onApplyDe
                             type="button"
                             className="copy-action copy-delete"
                             disabled={applying || isDemoData || isKeeper}
-                            onClick={() => handleDelete(group, file)}
+                            onClick={() => { void handleDelete(group, file) }}
                           >
                             Delete
                           </button>
@@ -141,7 +145,7 @@ function SimilarReport({ groups, isDemoData, loading, error, applying, onApplyDe
           isDemoData={isDemoData}
           onPick={(path) => pickKeeper(groups[compareIndex], path)}
           onClose={() => setCompareIndex(null)}
-          onDelete={(file) => handleDelete(groups[compareIndex], file)}
+          onDelete={(file) => { void handleDelete(groups[compareIndex], file) }}
         />
       )}
     </section>
