@@ -3,8 +3,9 @@ const { createHash } = require('node:crypto')
 const { createReadStream } = require('node:fs')
 const { planFirstSync, createConflictPath } = require('./first-sync.cjs')
 const { planSyncAction } = require('./sync-policy.cjs')
+const { planRebalance } = require('./rebalance.cjs')
 const { SyncRunner } = require('./sync-runner.cjs')
-const { moveLocalFileToTrash, scanSyncRoot, snapshotFile, writeStreamAtomically } = require('./file-ops.cjs')
+const { hashFileMd5, moveLocalFileToTrash, scanSyncRoot, snapshotFile, writeStreamAtomically } = require('./file-ops.cjs')
 
 function manifestToRecord(manifest) {
   return {
@@ -91,6 +92,58 @@ class SyncEngine {
   // files that have not synced yet are handled too.
   async removeFiles(removals) {
     return this.#removeCopies(removals, { requireDuplicate: false })
+  }
+
+  // Rebalance the connected drives on request: decide which already-synced files
+  // should move to a different account so every drive ends up at roughly the same
+  // fill level, and (unless this is a preview) queue those moves. The planner is
+  // pure, so a preview and the applied run agree exactly. Moves are ordinary runner
+  // operations, so they appear in the transfer queue, retry on failure, and can be
+  // cancelled before they start.
+  async rebalance({ apply = false, maxBytes = null, maxMoves = null, thresholdPercent = undefined } = {}) {
+    if (!this.rootPath) throw new Error('A local sync folder has not been selected')
+    if (this.providers.length === 0) {
+      const error = new Error('Connect at least one Google Drive account before rebalancing')
+      error.code = 'NO_DRIVE_ACCOUNTS'
+      throw error
+    }
+    const accounts = []
+    for (const provider of this.providers) {
+      const quota = await provider.getQuota()
+      accounts.push({
+        id: provider.accountId,
+        email: provider.email,
+        limitBytes: quota.limitBytes == null ? null : Number(quota.limitBytes),
+        usageBytes: Number(quota.usageBytes ?? 0),
+      })
+    }
+    const files = this.store.listFiles()
+    const plan = planRebalance({
+      accounts,
+      files,
+      reservePercent: this.settings.storageReservePercent,
+      options: {
+        thresholdPercent,
+        maxBytes: maxBytes ?? undefined,
+        maxMoves: maxMoves ?? undefined,
+      },
+    })
+    if (!apply || plan.moves.length === 0) {
+      return { applied: false, queued: 0, ...plan }
+    }
+    const manifestByPath = new Map(files.map((file) => [file.relative_path, file]))
+    let queued = 0
+    for (const move of plan.moves) {
+      const manifest = manifestByPath.get(move.relativePath)
+      if (!manifest?.account_id || !manifest?.drive_file_id) continue
+      this.#enqueue('move-remote', move.relativePath, manifest.account_id, manifest.drive_file_id, {
+        targetAccountId: move.toAccountId,
+        expectedHash: manifest.baseline_hash ?? null,
+        sizeBytes: move.sizeBytes,
+      })
+      queued += 1
+    }
+    return { applied: true, queued, ...plan }
   }
 
   async #removeCopies(removals, { requireDuplicate }) {
@@ -230,6 +283,15 @@ class SyncEngine {
     const renames = this.#detectLocalRenames(manifests, localByPath)
     const claimedNew = new Set(renames.values())
 
+    // A file with a pending rebalance move must not also be planned as a normal
+    // upload/download/trash; the move owns it until it finishes (or is cancelled).
+    const pendingMovePaths = new Set()
+    for (const operation of this.store.listOperations()) {
+      if (operation.kind === 'move-remote' && ['queued', 'running', 'retry', 'failed'].includes(operation.state)) {
+        pendingMovePaths.add(operation.relative_path)
+      }
+    }
+
     const changesSupported = this.providers.length > 0 && this.providers.every((provider) => this.#supportsChanges(provider))
     const consumed = changesSupported ? await this.#consumeChanges() : null
     const anyPending = Boolean(consumed && consumed.count > 0)
@@ -259,6 +321,7 @@ class SyncEngine {
     }
 
     for (const manifest of manifests) {
+      if (pendingMovePaths.has(manifest.relative_path)) continue
       const renamedDestination = renames.get(manifest.relative_path)
       if (renamedDestination) {
         this.#enqueue('rename-remote', renamedDestination, manifest.account_id, manifest.drive_file_id, {
@@ -644,6 +707,87 @@ class SyncEngine {
           if (error.code !== 'FILE_NOT_FOUND') throw error
           return upload(operation, { newFile: true })
         }
+      },
+      // Move a synced file to a different account: copy the local bytes to the
+      // target, verify them, repoint the manifest, then permanently delete the
+      // source copy. Deleting (rather than trashing) is deliberate — Drive trash
+      // still counts against the quota, so trashing would free no usable space.
+      'move-remote': async (operation) => {
+        const targetAccountId = operation.payload?.targetAccountId
+        if (!targetAccountId || targetAccountId === operation.account_id) return { skipped: 'no-target' }
+        const source = this.#provider(operation.account_id)
+        const target = this.#provider(targetAccountId)
+        let local
+        try {
+          local = await snapshotFile(rootPath, operation.relative_path)
+        } catch (error) {
+          if (error.code === 'ENOENT') return { skipped: 'local-missing' }
+          throw error
+        }
+        // The plan was built from the synced baseline. If the file changed since
+        // then, leave it where it is and let the normal sync handle the edit.
+        if (operation.payload.expectedHash && operation.payload.expectedHash !== local.hash) {
+          return { skipped: 'local-changed' }
+        }
+        const targetRootFolderId = this.store.getAccount(target.accountId)?.root_folder_id
+        if (!targetRootFolderId) throw new Error(`The managed Drive folder for ${target.accountId} is not ready`)
+        // Idempotent by operation id: a retry updates the same target file rather
+        // than creating a second copy.
+        const remote = await target.uploadFile({
+          rootFolderId: targetRootFolderId,
+          relativePath: operation.relative_path,
+          readable: createReadStream(local.absolutePath),
+          size: local.size,
+          hash: local.hash,
+          driveFileId: null,
+          idempotencyKey: operation.id,
+        })
+        // Drop the provisional copy (best effort) if the transfer cannot be
+        // trusted, so a failed attempt never leaves an orphan on the target drive.
+        const discardCopy = async () => {
+          try {
+            await target.deleteFile(remote.driveFileId)
+          } catch (error) {
+            if (error.code !== 'FILE_NOT_FOUND') throw error
+          }
+        }
+        if (remote.md5Checksum) {
+          const localMd5 = await hashFileMd5(local.absolutePath)
+          if (localMd5 !== remote.md5Checksum) {
+            await discardCopy()
+            const error = new Error('The copied file did not match its source checksum; the move will be retried')
+            error.code = 'REBALANCE_VERIFY_FAILED'
+            throw error
+          }
+        }
+        // If the file changed while it was being copied, do not delete the
+        // original: discard the provisional copy and let the next sync upload
+        // the edit to whichever drive the file still lives on.
+        const after = await snapshotFile(rootPath, operation.relative_path)
+        if (after.hash !== local.hash) {
+          await discardCopy()
+          return { skipped: 'local-changed-during-copy' }
+        }
+        // Point the manifest at the new copy before removing the old one, so a
+        // crash between the two steps can never lose track of the file.
+        this.store.upsertFile({
+          relativePath: operation.relative_path,
+          accountId: target.accountId,
+          driveFileId: remote.driveFileId,
+          baselineHash: local.hash,
+          sizeBytes: local.size,
+          localModifiedAt: local.modifiedAt,
+          remoteModifiedAt: remote.modifiedAt,
+          syncState: 'active',
+        })
+        if (operation.drive_file_id) {
+          try {
+            await source.deleteFile(operation.drive_file_id)
+          } catch (error) {
+            if (error.code !== 'FILE_NOT_FOUND') throw error
+          }
+        }
+        return remote
       },
       'keep-both': async (operation) => {
         const provider = this.#provider(operation.payload.remote.accountId)

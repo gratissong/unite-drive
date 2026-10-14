@@ -24,6 +24,7 @@ import {
   Plus,
   Power,
   RefreshCw,
+  Scale,
   Search,
   Settings2,
   ShieldCheck,
@@ -40,6 +41,7 @@ import DedupeReport from './DedupeReport'
 import { buildDuplicateGroups, type DuplicateGroup } from './dedup'
 import SimilarReport from './SimilarReport'
 import { demoSimilarGroups, mapSimilarGroups, type SimilarGroup } from './similar'
+import RebalanceReport from './RebalanceReport'
 import ExplorerTab from './ExplorerTab'
 import { useConfirm } from './confirm'
 
@@ -252,7 +254,8 @@ function App() {
   const [files, setFiles] = useState(window.uniteDrive ? [] : recentFiles)
   const [duplicateGroups, setDuplicateGroups] = useState<DuplicateGroup[]>(demoDuplicateGroups)
   const [applyingDedupe, setApplyingDedupe] = useState(false)
-  const [storageView, setStorageView] = useState<'duplicates' | 'similar'>('duplicates')
+  const [applyingRebalance, setApplyingRebalance] = useState(false)
+  const [storageView, setStorageView] = useState<'duplicates' | 'similar' | 'rebalance'>('duplicates')
   const [similarGroups, setSimilarGroups] = useState<SimilarGroup[]>(demoSimilarGroups)
   const [similarLoading, setSimilarLoading] = useState(false)
   const [similarError, setSimilarError] = useState('')
@@ -553,7 +556,7 @@ function App() {
     Files: 'Find where everything lives.',
     Explorer: 'Browse and manage your local sync folder.',
     Transfers: 'A clear view of every move.',
-    Storage: 'Reclaim space from duplicate files.',
+    Storage: 'Reclaim space and even out your drives.',
     Accounts: 'Your connected storage accounts.',
     Settings: 'Set the rules for your cloud.',
   }
@@ -859,6 +862,30 @@ function App() {
       notify('error', error instanceof Error ? error.message : 'Could not remove similar copies.')
     } finally {
       setApplyingDedupe(false)
+    }
+  }
+
+  async function rebalanceDrives(options: { maxBytes: number | null }) {
+    if (!window.uniteDrive) {
+      notify('info', 'Rebalancing drives is available in the Windows desktop app.')
+      return false
+    }
+    setApplyingRebalance(true)
+    try {
+      const result = await window.uniteDrive.rebalanceDrives(options)
+      await refreshDriveAccounts()
+      setManifestRevision((revision) => revision + 1)
+      if (result.queued > 0) {
+        notify('success', `Rebalancing ${result.queued} file${result.queued === 1 ? '' : 's'} (${formatBytes(result.totalBytes)}). Track progress in Transfers.`)
+      } else {
+        notify('info', 'Nothing to move — your drives are already balanced.')
+      }
+      return true
+    } catch (error) {
+      notify('error', error instanceof Error ? error.message : 'Could not start rebalancing.')
+      return false
+    } finally {
+      setApplyingRebalance(false)
     }
   }
 
@@ -1294,10 +1321,13 @@ function App() {
               <div className="storage-view-tabs" role="tablist">
                 <button type="button" role="tab" aria-selected={storageView === 'duplicates'} className={storageView === 'duplicates' ? 'active' : ''} onClick={() => setStorageView('duplicates')}><FileArchive size={13} /> Exact duplicates</button>
                 <button type="button" role="tab" aria-selected={storageView === 'similar'} className={storageView === 'similar' ? 'active' : ''} onClick={() => setStorageView('similar')}><FileImage size={13} /> Similar photos</button>
+                <button type="button" role="tab" aria-selected={storageView === 'rebalance'} className={storageView === 'rebalance' ? 'active' : ''} onClick={() => setStorageView('rebalance')}><Scale size={13} /> Rebalance drives</button>
               </div>
               {storageView === 'duplicates'
                 ? <DedupeReport groups={duplicateGroups} isDemoData={isDemoData} applying={applyingDedupe} onApplyDedupe={applyDedupe} />
-                : <SimilarReport groups={similarGroups} isDemoData={isDemoData} loading={similarLoading} error={similarError} applying={applyingDedupe} onRemoveFiles={removeSimilarFiles} />}
+                : storageView === 'similar'
+                  ? <SimilarReport groups={similarGroups} isDemoData={isDemoData} loading={similarLoading} error={similarError} applying={applyingDedupe} onRemoveFiles={removeSimilarFiles} />
+                  : <RebalanceReport accounts={accounts} isDemoData={isDemoData} applying={applyingRebalance} onRebalance={rebalanceDrives} />}
             </div>
           )}
 

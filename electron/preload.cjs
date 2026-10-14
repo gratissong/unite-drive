@@ -33,6 +33,8 @@ contextBridge.exposeInMainWorld('uniteDrive', {
   getSimilarGroups: () => ipcRenderer.invoke('unite-drive:get-similar-groups'),
   applyDedupe: (removals) => ipcRenderer.invoke('unite-drive:apply-dedupe', removals),
   removeFiles: (removals) => ipcRenderer.invoke('unite-drive:remove-files', removals),
+  getRebalancePlan: (options) => ipcRenderer.invoke('unite-drive:get-rebalance-plan', options),
+  rebalanceDrives: (options) => ipcRenderer.invoke('unite-drive:rebalance-drives', options),
   resetSyncState: () => ipcRenderer.invoke('unite-drive:reset-sync-state'),
   onSyncStatus: (callback) => {
     const listener = (_event, status) => callback(status)

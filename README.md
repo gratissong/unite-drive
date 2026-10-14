@@ -17,13 +17,24 @@ Windows desktop app for syncing one local folder with multiple Google Drive acco
 4. In Unite Drive, open **Settings**, choose **Import credentials JSON**, select that downloaded file, then connect each account. The client secret is encrypted locally and never shown in the interface.
 5. Choose a local folder and enable sync.
 
-The app requests full Google Drive access (`auth/drive`) plus `openid`, `email`, and `profile`. `auth/drive` is the minimum scope that still enables two-way sync of files you add directly inside the managed folder: Google's `drive.file` scope only covers files opened or shared through a picker, and there is no folder-scoped write scope, so the app deliberately requests only `drive` (which subsumes `drive.file` and `drive.metadata.readonly`). It creates a `Unite Drive` folder on each account and scans binary files in that folder tree, including files you add yourself. Files are assigned to the connected account with enough remaining space, respecting the configured reserve. The **File routing** settings can turn off automatic selection and pick a default drive for new files (used whenever it has room); files already assigned to a drive are never moved, and a full default drive falls back to the most available one.
+The app requests full Google Drive access (`auth/drive`) plus `openid`, `email`, and `profile`. `auth/drive` is the minimum scope that still enables two-way sync of files you add directly inside the managed folder: Google's `drive.file` scope only covers files opened or shared through a picker, and there is no folder-scoped write scope, so the app deliberately requests only `drive` (which subsumes `drive.file` and `drive.metadata.readonly`). It creates a `Unite Drive` folder on each account and scans binary files in that folder tree, including files you add yourself. Files are assigned to the connected account with enough remaining space, respecting the configured reserve. The **File routing** settings can turn off automatic selection and pick a default drive for new files (used whenever it has room); files already assigned to a drive are never moved automatically — the explicit **Rebalance drives** action described below is how you relocate them — and a full default drive falls back to the most available one.
 
 Full access is what enables two-way sync of manually-added files (reading their contents, adopting them, and writing local edits back). Accounts connected with the older `drive.file`-only scope must be **reconnected once** to grant the broader scope. Until then, the app skips files it cannot read, keeps the rest of the sync running, and shows a "Reconnect for two-way sync" notice instead of failing the whole sync.
 
 Refresh tokens and the Desktop client secret are encrypted with Electron `safeStorage` and kept in the current Windows user profile. OAuth callbacks use a temporary loopback HTTP listener, state validation, and PKCE S256. No backend service is used.
 
 Connected accounts can be removed from the **Accounts** page (trash icon on the account card) or **Settings** (Remove on the account row). Removing an account forgets its encrypted credentials and local sync mapping on this device and leaves the files already in Google Drive untouched; the local folder is re-scanned and routed to the remaining accounts. Removing the last account pauses sync.
+
+## Rebalancing drives
+
+When one account is nearly full and another has room — for example right after you connect a new account — **Storage → Rebalance drives** moves files off the fuller accounts onto the emptier ones so every drive ends up at roughly the same percentage full.
+
+- The panel previews the exact plan first: which files, on which drives, and how much data in total. Nothing moves until you confirm.
+- An optional **Maximum data to move** cap limits a single run; the plan says when the cap was applied.
+- Each file is copied to the target account from the local sync folder and checked against Google's checksum, then the source copy is **permanently deleted**. Google Drive's trash still counts against your quota, so trashing the source would not free space right away. Nothing is lost: the file still exists on the new drive and in your local folder.
+- Moves are ordinary queued transfers, so they appear in **Transfers**, retry on temporary errors, and can be cancelled before they start. The local copy and the manifest mapping are updated only after the new copy is stored.
+- A file that changed locally after the plan was built is left where it is and reconciled by the next normal sync. Accounts reporting an unmetered (unlimited) quota are not part of the balancing.
+- Only files Unite Drive manages can move. If a nearly-full drive's space is used by Gmail, Google Photos, or files outside your sync folder, rebalancing can't free it — the panel flags that drive and tells you how much space Unite Drive manages on it.
 
 ## Sync safety behavior
 
@@ -54,6 +65,6 @@ The installed app can check GitHub Releases for a newer version and install it i
 
 ## Current limitations
 
-- Google Drive native Docs/Sheets/Slides export and conversion are not implemented; binary files are supported.
+- Google Drive native Docs/Sheets/Slides export and conversion are not implemented; binary files are supported. Rebalancing moves binary file bytes only, and file-level sharing/permissions on the original copy are not carried over to the new copy.
 - The app watches local changes and polls Drive periodically; it does not use Drive push notifications.
 - Conflict copies and the app-owned Drive folder are intended to be managed by Unite Drive; do not independently reorganize those folders during sync.

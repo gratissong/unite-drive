@@ -67,6 +67,7 @@ class FakeDriveProvider {
       rootFolderId: this.rootFolderId,
       relativePath,
       hash: actualHash,
+      md5Checksum: crypto.createHash('md5').update(content).digest('hex'),
       size: content.length,
       modifiedAt: new Date().toISOString(),
       trashed: false,
@@ -110,6 +111,13 @@ class FakeDriveProvider {
     return this.#metadata(file)
   }
 
+  async deleteFile(driveFileId) {
+    this.#maybeFail('deleteFile')
+    this.#requireFile(driveFileId)
+    this.files.delete(driveFileId)
+    this.#recordChange(driveFileId, true)
+  }
+
   failNext(method, error = new Error(`Injected ${method} failure`), times = 1) {
     this.failures.set(method, { error, times })
   }
@@ -122,6 +130,7 @@ class FakeDriveProvider {
       rootFolderId: this.rootFolderId,
       relativePath,
       hash: crypto.createHash('sha256').update(buffer).digest('hex'),
+      md5Checksum: crypto.createHash('md5').update(buffer).digest('hex'),
       size: buffer.length,
       modifiedAt,
       trashed,
@@ -156,6 +165,7 @@ class FakeDriveProvider {
       const buffer = Buffer.from(content)
       file.content = buffer
       file.hash = crypto.createHash('sha256').update(buffer).digest('hex')
+      file.md5Checksum = crypto.createHash('md5').update(buffer).digest('hex')
       file.size = buffer.length
     }
     if (relativePath !== undefined) file.relativePath = relativePath

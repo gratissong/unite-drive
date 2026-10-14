@@ -12,6 +12,7 @@ const operationKinds = new Set([
   'restore-local',
   'restore-remote',
   'keep-both',
+  'move-remote',
 ])
 
 // Windows reserves these as device names regardless of extension, so a path

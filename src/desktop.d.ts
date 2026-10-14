@@ -86,6 +86,44 @@ type SyncStateSnapshot = {
   }>
 }
 
+type RebalanceOptions = {
+  /** Optional cap on how many bytes a single rebalance may move. */
+  maxBytes?: number | null
+  /** Optional cap on how many files a single rebalance may move. */
+  maxMoves?: number | null
+}
+
+type RebalanceAccount = {
+  id: string
+  email: string | null
+  limitBytes: number
+  usageBytes: number
+  managedBytes: number
+  movableFiles: number
+  fillPercent: number
+}
+
+type RebalanceMove = {
+  relativePath: string
+  fromAccountId: string
+  toAccountId: string
+  sizeBytes: number
+}
+
+type RebalancePlan = {
+  applied: boolean
+  queued: number
+  moves: RebalanceMove[]
+  totalBytes: number
+  totalFiles: number
+  thresholdPercent: number
+  capped: boolean
+  balanced: boolean
+  blockedAccountIds: string[]
+  accounts: RebalanceAccount[]
+  projected: RebalanceAccount[]
+}
+
 declare global {
   // App version injected by vite.config.ts from package.json.
   interface ImportMetaEnv {
@@ -139,6 +177,8 @@ declare global {
       }[]>>
       applyDedupe: (removals: Array<{ relativePath: string }>) => Promise<{ removed: string[]; errors: Array<{ relativePath: string; message: string }> }>
       removeFiles: (removals: Array<{ relativePath: string }>) => Promise<{ removed: string[]; errors: Array<{ relativePath: string; message: string }> }>
+      getRebalancePlan: (options?: RebalanceOptions) => Promise<RebalancePlan>
+      rebalanceDrives: (options?: RebalanceOptions) => Promise<RebalancePlan>
       resetSyncState: () => Promise<boolean>
       getUpdateStatus: () => Promise<UpdateStatus>
       checkForUpdates: () => Promise<UpdateStatus>
