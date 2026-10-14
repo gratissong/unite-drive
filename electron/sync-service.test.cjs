@@ -62,3 +62,24 @@ test('start resolves before the initial sync when awaitInitialSync is false', as
   await service.syncNow()
   await service.stop()
 })
+
+test('setRemotePollMs updates the poll interval without restarting the service', async (context) => {
+  const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'unite-drive-watch-'))
+  context.after(() => fs.promises.rm(root, { recursive: true, force: true }))
+  let syncCount = 0
+  const service = new SyncService({ syncOnce: async () => ({ completed: 0, failed: 0, retrying: 0, count: ++syncCount }) }, {
+    rootPath: root,
+    debounceMs: 40,
+    remotePollMs: 60_000,
+  })
+  context.after(() => service.stop())
+
+  await service.start()
+  assert.equal(syncCount, 1)
+  assert.equal(service.remotePollMs, 60_000)
+
+  service.setRemotePollMs(5 * 60_000)
+  assert.equal(service.remotePollMs, 5 * 60_000)
+
+  await service.stop()
+})

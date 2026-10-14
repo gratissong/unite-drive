@@ -63,3 +63,15 @@ test('persists the automatic update check preference', (context) => {
   assert.equal(store.load().autoUpdateCheck, false)
   assert.equal(store.update({ autoUpdateCheck: 'no' }).autoUpdateCheck, true)
 })
+
+test('persists the sync interval preference', (context) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'unite-drive-settings-'))
+  context.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  const store = createSettingsStore(path.join(directory, 'sync-settings.json'))
+
+  assert.equal(store.load().syncIntervalMinutes, 1)
+  assert.equal(store.update({ syncIntervalMinutes: 5 }).syncIntervalMinutes, 5)
+  assert.equal(store.update({ syncIntervalMinutes: 'invalid' }).syncIntervalMinutes, 1)
+  assert.equal(store.update({ syncIntervalMinutes: 0 }).syncIntervalMinutes, 1)
+  assert.equal(store.update({ syncIntervalMinutes: 121 }).syncIntervalMinutes, 120)
+})

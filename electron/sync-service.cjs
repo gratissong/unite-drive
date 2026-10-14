@@ -38,6 +38,15 @@ class SyncService {
     else void initialSync.catch(() => {})
   }
 
+  setRemotePollMs(remotePollMs) {
+    this.remotePollMs = remotePollMs
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer)
+      this.pollTimer = setInterval(() => { void this.syncNow() }, this.remotePollMs)
+      this.pollTimer.unref?.()
+    }
+  }
+
   async stop() {
     clearInterval(this.pollTimer)
     clearTimeout(this.debounceTimer)

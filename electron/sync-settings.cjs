@@ -13,6 +13,7 @@ const defaults = Object.freeze({
   preferredAccountId: null,
   launchAtLogin: false,
   autoUpdateCheck: true,
+  syncIntervalMinutes: 1,
 })
 
 function normalizeSettings(value) {
@@ -31,6 +32,9 @@ function normalizeSettings(value) {
       : null,
     launchAtLogin: value.launchAtLogin === true,
     autoUpdateCheck: value.autoUpdateCheck !== false,
+    syncIntervalMinutes: Number.isInteger(value.syncIntervalMinutes)
+      ? Math.max(1, Math.min(120, value.syncIntervalMinutes))
+      : defaults.syncIntervalMinutes,
   }
 }
 
