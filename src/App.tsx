@@ -846,6 +846,22 @@ function App() {
     }
   }
 
+  async function removeSimilarFiles(removals: Array<{ relativePath: string }>) {
+    if (!window.uniteDrive) { notify('info', 'Similar-photo cleanup is available in the Windows desktop app.'); return }
+    setApplyingDedupe(true)
+    try {
+      const result = await window.uniteDrive.removeFiles(removals)
+      await refreshDriveAccounts()
+      if (result.removed.length) notify('success', `Removed ${result.removed.length} similar cop${result.removed.length === 1 ? 'y' : 'ies'}. Everything moved to the trash.`)
+      if (result.errors.length) notify('warning', `${result.errors.length} cop${result.errors.length === 1 ? 'y' : 'ies'} could not be removed. The failed copies were left as they were.`)
+      setManifestRevision((revision) => revision + 1)
+    } catch (error) {
+      notify('error', error instanceof Error ? error.message : 'Could not remove similar copies.')
+    } finally {
+      setApplyingDedupe(false)
+    }
+  }
+
   async function resetSyncState() {
     if (!window.uniteDrive) {
       notify('info', 'Sync state reset is available in the Windows desktop app.')
@@ -1281,7 +1297,7 @@ function App() {
               </div>
               {storageView === 'duplicates'
                 ? <DedupeReport groups={duplicateGroups} isDemoData={isDemoData} applying={applyingDedupe} onApplyDedupe={applyDedupe} />
-                : <SimilarReport groups={similarGroups} isDemoData={isDemoData} loading={similarLoading} error={similarError} applying={applyingDedupe} onApplyDedupe={applyDedupe} />}
+                : <SimilarReport groups={similarGroups} isDemoData={isDemoData} loading={similarLoading} error={similarError} applying={applyingDedupe} onRemoveFiles={removeSimilarFiles} />}
             </div>
           )}
 

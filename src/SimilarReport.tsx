@@ -9,7 +9,7 @@ type Props = {
   loading: boolean
   error: string
   applying: boolean
-  onApplyDedupe: (removals: Array<{ relativePath: string }>) => void
+  onRemoveFiles: (removals: Array<{ relativePath: string }>) => void
 }
 
 function formatBytes(bytes: number) {
@@ -21,7 +21,7 @@ function formatBytes(bytes: number) {
   return `${Math.max(1, Math.round(bytes / 1024))} KB`
 }
 
-function SimilarReport({ groups, isDemoData, loading, error, applying, onApplyDedupe }: Props) {
+function SimilarReport({ groups, isDemoData, loading, error, applying, onRemoveFiles }: Props) {
   const confirm = useConfirm()
   const [keepers, setKeepers] = useState<Record<string, string>>({})
   const [compareIndex, setCompareIndex] = useState<number | null>(null)
@@ -43,7 +43,7 @@ function SimilarReport({ groups, isDemoData, loading, error, applying, onApplyDe
       message: `“${name}” moves to your Recycle Bin and to Google Drive's trash — both recoverable. The keeper “${keeper}” stays unchanged.`,
       confirmLabel: 'Delete copy',
     })
-    if (confirmed) onApplyDedupe([{ relativePath: file.path }])
+    if (confirmed) onRemoveFiles([{ relativePath: file.path }])
   }
 
   return (

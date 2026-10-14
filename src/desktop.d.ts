@@ -138,6 +138,7 @@ declare global {
         thumbnail: string | null
       }[]>>
       applyDedupe: (removals: Array<{ relativePath: string }>) => Promise<{ removed: string[]; errors: Array<{ relativePath: string; message: string }> }>
+      removeFiles: (removals: Array<{ relativePath: string }>) => Promise<{ removed: string[]; errors: Array<{ relativePath: string; message: string }> }>
       resetSyncState: () => Promise<boolean>
       getUpdateStatus: () => Promise<UpdateStatus>
       checkForUpdates: () => Promise<UpdateStatus>
