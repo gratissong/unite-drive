@@ -24,6 +24,8 @@ const oauthCredentialKey = '__google_oauth_desktop_client__'
 let mainWindow
 let tray
 let isQuitting = false
+let syncShutdownInProgress = false
+let allowQuit = false
 let trayNoticeShown = false
 let settingsStore
 let syncStore
@@ -919,8 +921,23 @@ function publishSyncStatus(status) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('unite-drive:sync-status', status)
 }
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
   isQuitting = true
+  // Let an in-flight sync finish before the process exits, so quitting (or
+  // reinstalling over the app) never throws away a transfer that is partway
+  // through. Quit requests that arrive while the sync drains are deferred too;
+  // once it finishes, the app.quit() below is let through by `allowQuit`.
+  if (allowQuit || !syncService) return
+  event.preventDefault()
+  if (syncShutdownInProgress) return
+  syncShutdownInProgress = true
+  void syncService.stop()
+    .catch((error) => console.error(`[Unite Drive] Could not stop sync cleanly on quit: ${error.message}`))
+    .finally(() => {
+      syncService = null
+      allowQuit = true
+      app.quit()
+    })
 })
 
 app.on('window-all-closed', () => {
