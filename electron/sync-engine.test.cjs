@@ -342,6 +342,62 @@ test('applyDedupe refuses a batch that would remove every copy of a file', async
   })
 })
 
+test('removeFiles removes a unique photo (no identical copy) locally and on Drive, then tombstones it', async () => {
+  const provider = drive('drive-a')
+  await withEngine({
+    localFiles: { 'photos/keep.jpg': 'frame one', 'photos/extra.jpg': 'frame two' },
+    providers: [provider],
+  }, async ({ rootPath, engine, store }) => {
+    await engine.syncOnce()
+    assert.equal((await provider.listManagedFiles(provider.rootFolderId)).length, 2)
+
+    const result = await engine.removeFiles([{ relativePath: 'photos/extra.jpg' }])
+    assert.equal(result.removed.length, 1)
+    assert.equal(result.errors.length, 0)
+
+    // Local copy moved out of the sync root (to .trashed), the similar keeper untouched.
+    assert.equal(fs.existsSync(path.join(rootPath, 'photos', 'extra.jpg')), false)
+    assert.equal(await fs.promises.readFile(path.join(rootPath, 'photos', 'keep.jpg'), 'utf8'), 'frame one')
+
+    // Drive copy trashed, keeper still present, manifest row tombstoned.
+    const managed = await provider.listManagedFiles(provider.rootFolderId)
+    assert.equal(managed.length, 1)
+    assert.equal(managed[0].relativePath, 'photos/keep.jpg')
+    assert.equal(store.getFile('photos/extra.jpg').sync_state, 'tombstone')
+    assert.equal(store.getFile('photos/keep.jpg').sync_state, 'active')
+  })
+})
+
+test('removeFiles does not resurrect the removed photo on a later sync', async () => {
+  const provider = drive('drive-a')
+  await withEngine({
+    localFiles: { 'photos/keep.jpg': 'frame one', 'photos/extra.jpg': 'frame two' },
+    providers: [provider],
+  }, async ({ rootPath, engine, store }) => {
+    await engine.syncOnce()
+    await engine.removeFiles([{ relativePath: 'photos/extra.jpg' }])
+    // The test fake renames to a sibling .trashed file; real trash leaves the tree.
+    await fs.promises.rm(path.join(rootPath, 'photos', 'extra.jpg.trashed'), { force: true })
+
+    await engine.syncOnce()
+
+    assert.equal((await provider.listManagedFiles(provider.rootFolderId)).length, 1)
+    assert.equal(fs.existsSync(path.join(rootPath, 'photos', 'extra.jpg')), false)
+    assert.match(store.getFile('photos/extra.jpg').sync_state, /tombstone|forgotten/)
+    assert.equal(await fs.promises.readFile(path.join(rootPath, 'photos', 'keep.jpg'), 'utf8'), 'frame one')
+  })
+})
+
+test('removeFiles removes a local-only photo that has not synced yet', async () => {
+  const provider = drive('drive-a')
+  await withEngine({ localFiles: { 'photos/solo.jpg': 'unique frame' }, providers: [provider] }, async ({ rootPath, engine }) => {
+    const result = await engine.removeFiles([{ relativePath: 'photos/solo.jpg' }])
+    assert.equal(result.removed.length, 1)
+    assert.equal(result.errors.length, 0)
+    assert.equal(fs.existsSync(path.join(rootPath, 'photos', 'solo.jpg')), false)
+  })
+})
+
 test('incremental idle sync skips remote listing', async () => {
   const provider = drive('drive-a', { trackChanges: true })
   provider.seedFile({ relativePath: 'docs/from-drive.txt', content: 'remote content' })

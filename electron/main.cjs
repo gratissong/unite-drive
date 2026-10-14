@@ -557,6 +557,24 @@ ipcMain.handle('unite-drive:apply-dedupe', async (_event, removals) => {
   })
   return result
 })
+ipcMain.handle('unite-drive:remove-files', async (_event, removals) => {
+  if (!Array.isArray(removals) || removals.length === 0) return { removed: [], errors: [] }
+  const settings = settingsStore.load()
+  if (!settings.folderPath) {
+    const error = new Error('Choose a local sync folder before removing copies.')
+    error.code = 'SYNC_NOT_CONFIGURED'
+    throw error
+  }
+  const engine = syncService?.engine ?? createSyncEngine(settings)
+  const result = await engine.removeFiles(removals)
+  publishSyncStatus({
+    status: syncService ? 'idle' : 'paused',
+    message: result.errors.length
+      ? `Cleanup finished with ${result.errors.length} issue${result.errors.length === 1 ? '' : 's'}.`
+      : `Removed ${result.removed.length} cop${result.removed.length === 1 ? 'y' : 'ies'}.`,
+  })
+  return result
+})
 ipcMain.handle('unite-drive:get-similar-groups', () => {
   const settings = settingsStore.load()
   if (!settings.folderPath) return []

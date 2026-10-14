@@ -32,6 +32,7 @@ contextBridge.exposeInMainWorld('uniteDrive', {
   syncNow: () => ipcRenderer.invoke('unite-drive:sync-now'),
   getSimilarGroups: () => ipcRenderer.invoke('unite-drive:get-similar-groups'),
   applyDedupe: (removals) => ipcRenderer.invoke('unite-drive:apply-dedupe', removals),
+  removeFiles: (removals) => ipcRenderer.invoke('unite-drive:remove-files', removals),
   resetSyncState: () => ipcRenderer.invoke('unite-drive:reset-sync-state'),
   onSyncStatus: (callback) => {
     const listener = (_event, status) => callback(status)

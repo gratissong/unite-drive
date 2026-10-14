@@ -81,6 +81,19 @@ class SyncEngine {
   // Each copy is moved to the OS trash and its Drive copy to Drive trash, then the
   // manifest row is tombstoned so a later scan does not re-import it.
   async applyDedupe(removals) {
+    return this.#removeCopies(removals, { requireDuplicate: true })
+  }
+
+  // Remove specific files the user explicitly chose (for example one photo out of a
+  // similar-photo group). These are not byte-for-byte copies, so — unlike dedupe —
+  // no identical sibling must remain. The local copy and its Drive copy are both
+  // moved to trash (recoverable) and the manifest row is tombstoned; local-only
+  // files that have not synced yet are handled too.
+  async removeFiles(removals) {
+    return this.#removeCopies(removals, { requireDuplicate: false })
+  }
+
+  async #removeCopies(removals, { requireDuplicate }) {
     if (!Array.isArray(removals) || removals.length === 0) return { removed: [], errors: [] }
     const removed = []
     const errors = []
@@ -93,35 +106,40 @@ class SyncEngine {
         continue
       }
       const manifest = this.store.getFile(relativePath)
-      if (!manifest || manifest.sync_state === 'tombstone' || manifest.sync_state === 'forgotten') {
-        errors.push({ relativePath, message: 'This copy is no longer part of the sync plan' })
-        continue
+      const isGone = !manifest || manifest.sync_state === 'tombstone' || manifest.sync_state === 'forgotten'
+      if (requireDuplicate) {
+        if (isGone) {
+          errors.push({ relativePath, message: 'This copy is no longer part of the sync plan' })
+          continue
+        }
+        // Only actual duplicates are removable: another fully-synced copy with the
+        // same content hash must remain after this batch, so a bug or compromised
+        // renderer can never trash the last (or only) copy through this channel.
+        const remainingDuplicates = manifest.baseline_hash
+          ? liveFiles.filter((file) =>
+              file.baseline_hash === manifest.baseline_hash &&
+              file.relative_path !== relativePath &&
+              !requestedPaths.has(file.relative_path) &&
+              Boolean(file.account_id && file.drive_file_id),
+            )
+          : []
+        if (remainingDuplicates.length === 0) {
+          errors.push({ relativePath, message: 'Removing this file would delete its last copy, so it cannot be removed' })
+          continue
+        }
       }
-      // Only actual duplicates are removable: another fully-synced copy with the
-      // same content hash must remain after this batch, so a bug or compromised
-      // renderer can never trash the last (or only) copy through this channel.
-      const remainingDuplicates = manifest.baseline_hash
-        ? liveFiles.filter((file) =>
-            file.baseline_hash === manifest.baseline_hash &&
-            file.relative_path !== relativePath &&
-            !requestedPaths.has(file.relative_path) &&
-            Boolean(file.account_id && file.drive_file_id),
-          )
-        : []
-      if (remainingDuplicates.length === 0) {
-        errors.push({ relativePath, message: 'Removing this file would delete its last copy, so it cannot be removed' })
-        continue
-      }
-      if (manifest.drive_file_id && manifest.account_id) {
+      // A file that has never synced has no manifest row and no Drive copy to trash.
+      const tracked = isGone ? null : manifest
+      if (tracked?.drive_file_id && tracked.account_id) {
         let provider
         try {
-          provider = this.#provider(manifest.account_id)
+          provider = this.#provider(tracked.account_id)
         } catch (error) {
           errors.push({ relativePath, message: error.message })
           continue
         }
         try {
-          await provider.trashFile(manifest.drive_file_id)
+          await provider.trashFile(tracked.drive_file_id)
         } catch (error) {
           errors.push({ relativePath, message: `Could not move the Google Drive copy to trash: ${error.message}` })
           continue
@@ -135,13 +153,15 @@ class SyncEngine {
           continue
         }
       }
-      this.store.upsertFile({
-        relativePath,
-        accountId: manifest.account_id,
-        driveFileId: manifest.drive_file_id,
-        syncState: 'tombstone',
-        deletedAt: new Date().toISOString(),
-      })
+      if (tracked) {
+        this.store.upsertFile({
+          relativePath,
+          accountId: tracked.account_id,
+          driveFileId: tracked.drive_file_id,
+          syncState: 'tombstone',
+          deletedAt: new Date().toISOString(),
+        })
+      }
       removed.push(relativePath)
     }
     return { removed, errors }
