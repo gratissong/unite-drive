@@ -429,8 +429,8 @@ h1, h2 { font-family: 'Manrope', 'Segoe UI', sans-serif; color: var(--ink); }
 .compare-meta { color: #8b9289; font-size: 9px; }
 .compare-actions { display: flex; gap: 6px; margin-top: 7px; }
 .compare-actions .copy-action { flex: 1; padding: 4px 6px; text-align: center; }
-.settings-page { width: min(100%, 760px); }
-.policy-settings { width: min(100%, 760px); margin: 4px 0 14px; padding: 16px 20px 4px; border: 1px solid #e3e8e1; border-radius: 6px; background: #fff; }
+.settings-page { width: 100%; }
+.policy-settings { margin: 4px 0 14px; padding: 16px 20px 4px; border: 1px solid #e3e8e1; border-radius: 6px; background: #fff; }
 .policy-heading { padding-bottom: 13px; }
 .policy-heading h2 { margin-top: 4px; font-size: 14px; }
 .policy-heading > div > p:last-child { margin-top: 3px; color: #858d83; font-size: 10px; }
@@ -439,7 +439,7 @@ h1, h2 { font-family: 'Manrope', 'Segoe UI', sans-serif; color: var(--ink); }
 .policy-copy strong { font-size: 11px; font-weight: 600; }
 .policy-copy p { max-width: 460px; margin-top: 3px; color: #858d83; font-size: 10px; }
 .policy-row select { width: 205px; min-height: 33px; flex: 0 0 auto; padding: 0 9px; border: 1px solid #dfe4dc; border-radius: 5px; background: #fff; color: #435047; font-size: 10px; }
-.google-settings { width: min(100%, 760px); margin: 4px 0 14px; padding: 16px 20px 4px; border: 1px solid #e3e8e1; border-radius: 6px; background: #fff; }
+.google-settings { margin: 4px 0 14px; padding: 16px 20px 4px; border: 1px solid #e3e8e1; border-radius: 6px; background: #fff; }
 .client-id-row { padding: 12px 0 13px; border-top: 1px solid #edf0eb; }
 .client-id-row > label { display: block; margin-bottom: 6px; color: #566157; font-size: 10px; font-weight: 600; }
 .client-id-actions { display: flex; gap: 8px; }
