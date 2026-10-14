@@ -51,6 +51,7 @@ When one account is nearly full and another has room — for example right after
 ## Background and startup
 
 - Closing the window does not quit the app. Unite Drive keeps running in the system tray so local changes and the periodic Drive poll keep syncing; use the tray icon to reopen the window, run **Sync now**, pause or resume syncing, or quit.
+- Quitting waits for any in-flight sync to finish first, so a transfer in progress is not thrown away; the app exits once the current sync cycle drains. Closing and reopening the window has no effect on syncing.
 - Only one instance runs at a time. Launching the app again focuses the existing window instead of starting a second sync watcher against the same folder.
 - **Launch at login** (Settings → Background & startup) starts Unite Drive when you sign in to Windows. The preference is stored with the other settings and applied immediately.
 
