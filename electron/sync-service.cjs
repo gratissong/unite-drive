@@ -13,7 +13,12 @@ class SyncService {
     this.currentSync = null
   }
 
-  async start() {
+  // Starts the watcher, then runs the initial reconciliation sync. Most callers
+  // want to wait for that sync, but one that only needs the service live - such
+  // as removing an account, where the next sync re-routes a lot of data - can
+  // pass `awaitInitialSync: false` so the promise resolves once the watcher is
+  // ready and the sync continues in the background.
+  async start({ awaitInitialSync = true } = {}) {
     if (this.watcher) return
     this.watcher = chokidar.watch(this.rootPath, {
       ignoreInitial: true,
@@ -28,7 +33,9 @@ class SyncService {
     })
     this.pollTimer = setInterval(() => { void this.syncNow() }, this.remotePollMs)
     this.pollTimer.unref?.()
-    await this.syncNow()
+    const initialSync = this.syncNow()
+    if (awaitInitialSync) await initialSync
+    else void initialSync.catch(() => {})
   }
 
   async stop() {

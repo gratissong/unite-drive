@@ -58,6 +58,8 @@ type DriveAccount = {
   initials: string
   connected?: boolean
   readWriteAccess?: boolean
+  managedFiles?: number
+  managedBytes?: number
 }
 
 type RoutedFile = {
@@ -175,6 +177,23 @@ function formatBytes(bytes: number) {
 function percentUsed(account: DriveAccount) {
   if (!account.quota) return 0
   return Math.min(100, Math.round((account.used / account.quota) * 100))
+}
+
+// Describes what removing an account actually does. Removing an account forgets
+// its manifest, so the next sync treats its local files as new and re-uploads
+// them to the remaining drives; say so plainly instead of the vague "re-syncs".
+function removeAccountMessage(account: DriveAccount, accounts: DriveAccount[]) {
+  const files = account.managedFiles ?? 0
+  const bytes = account.managedBytes ?? 0
+  const remaining = accounts.filter((item) => item.id !== account.id).length
+  if (files > 0 && remaining > 0) {
+    const size = bytes > 0 ? ` (${formatBytes(bytes)})` : ''
+    return `Unite Drive will forget ${account.email} and its sync history on this device. Its ${files.toLocaleString()} synced file${files === 1 ? '' : 's'}${size} will be re-uploaded to your remaining ${remaining === 1 ? 'drive' : 'drives'} in the background; the originals stay in this Google account.`
+  }
+  if (files > 0) {
+    return `Unite Drive will forget ${account.email} and its sync history on this device. Sync will pause because this is your last connected drive; the ${files.toLocaleString()} synced file${files === 1 ? '' : 's'} stay on this PC.`
+  }
+  return `Unite Drive will forget ${account.email} and its sync history on this device. Files already in Google Drive are left untouched, and your local folder re-syncs to your remaining accounts.`
 }
 
 function fileCategory(name: string) {
@@ -452,6 +471,8 @@ function App() {
         initials: account.email.charAt(0).toUpperCase(),
         connected: account.connected,
         readWriteAccess: account.readWriteAccess ?? true,
+        managedFiles: account.managedFiles,
+        managedBytes: account.managedBytes,
       })))
       setLastCheckedAt(new Date())
       setIsDemoData(false)
@@ -664,6 +685,8 @@ function App() {
       initials: account.email.charAt(0).toUpperCase(),
       connected: account.connected,
       readWriteAccess: account.readWriteAccess ?? true,
+      managedFiles: account.managedFiles,
+      managedBytes: account.managedBytes,
     })))
     setIsDemoData(false)
   }
@@ -701,11 +724,18 @@ function App() {
     }
     setRemovingAccount(true)
     try {
+      const remaining = accounts.filter((item) => item.id !== account.id).length
       await window.uniteDrive.removeGoogleAccount(account.id)
       if (preferredAccountId === account.id) await updatePreferredAccount('')
       setAccountToRemove(null)
       await refreshDriveAccounts()
-      notify('success', `Removed ${account.email}. Its files stay in Google Drive.`)
+      if (remaining === 0) {
+        notify('success', `Removed ${account.email}. Sync is paused; its files stay in Google Drive.`)
+      } else if ((account.managedFiles ?? 0) > 0) {
+        notify('success', `Removed ${account.email}. Its synced files are being re-uploaded to your remaining drives in the background.`)
+      } else {
+        notify('success', `Removed ${account.email}. Its files stay in Google Drive.`)
+      }
     } catch (error) {
       setAccountToRemove(null)
       notify('error', error instanceof Error ? error.message : 'Could not remove the account.')
@@ -1412,7 +1442,7 @@ function App() {
           </section>
         </div>
       )}
-      {accountToRemove && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAccountToRemove(null) }}><section className="connect-modal" role="dialog" aria-modal="true" aria-labelledby="remove-heading"><button className="modal-close" aria-label="Close dialog" onClick={() => setAccountToRemove(null)}><X size={17} /></button><span className="modal-icon danger"><Trash2 size={20} /></span><p className="eyebrow">REMOVE ACCOUNT</p><h2 id="remove-heading">Remove {accountToRemove.email}?</h2><p className="modal-copy">Unite Drive will forget this account and its sync history on this device. Files already in Google Drive are left untouched, and your local folder re-syncs to your remaining accounts.</p><div className="modal-confirm-actions"><button className="button button-secondary" onClick={() => setAccountToRemove(null)}>Cancel</button><button className="button button-danger" onClick={removeGoogleAccount} disabled={removingAccount}>{removingAccount ? 'Removing…' : 'Remove account'}</button></div></section></div>}
+      {accountToRemove && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (!removingAccount && event.target === event.currentTarget) setAccountToRemove(null) }}><section className="connect-modal" role="dialog" aria-modal="true" aria-labelledby="remove-heading"><button className="modal-close" aria-label="Close dialog" onClick={() => setAccountToRemove(null)} disabled={removingAccount}><X size={17} /></button><span className="modal-icon danger"><Trash2 size={20} /></span><p className="eyebrow">REMOVE ACCOUNT</p><h2 id="remove-heading">Remove {accountToRemove.email}?</h2><p className="modal-copy">{removeAccountMessage(accountToRemove, accounts)}</p><div className="modal-confirm-actions"><button className="button button-secondary" onClick={() => setAccountToRemove(null)} disabled={removingAccount}>Cancel</button><button className="button button-danger" onClick={removeGoogleAccount} disabled={removingAccount}>{removingAccount ? 'Removing…' : 'Remove account'}</button></div></section></div>}
       {toast && <div className="toast" role="status"><span className="toast-mark"><Check size={14} /></span>{toast}<button aria-label="Dismiss notification" onClick={() => setToast('')}><X size={14} /></button></div>}
     </div>
   )

@@ -23,6 +23,8 @@ type DriveAccountInfo = {
   limitBytes: number | null
   connected: boolean
   readWriteAccess?: boolean
+  managedFiles: number
+  managedBytes: number
 }
 
 type SyncStatus = {

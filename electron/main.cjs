@@ -418,6 +418,14 @@ ipcMain.handle('unite-drive:get-sync-state', () => ({
   operations: syncStore.listOperations(),
 }))
 ipcMain.handle('unite-drive:get-drive-accounts', async () => {
+  const managed = new Map()
+  for (const file of syncStore.listFiles()) {
+    if (!file.account_id) continue
+    const entry = managed.get(file.account_id) ?? { files: 0, bytes: 0 }
+    entry.files += 1
+    entry.bytes += file.size_bytes ?? 0
+    managed.set(file.account_id, entry)
+  }
   const accounts = []
   for (const account of syncStore.listAccounts()) {
     const provider = driveProviders.get(account.id)
@@ -435,6 +443,7 @@ ipcMain.handle('unite-drive:get-drive-accounts', async () => {
         readWriteAccess = false
       }
     }
+    const stats = managed.get(account.id) ?? { files: 0, bytes: 0 }
     accounts.push({
       id: account.id,
       email: account.email,
@@ -442,6 +451,8 @@ ipcMain.handle('unite-drive:get-drive-accounts', async () => {
       limitBytes: quota.limitBytes,
       connected: Boolean(provider),
       readWriteAccess,
+      managedFiles: stats.files,
+      managedBytes: stats.bytes,
     })
   }
   return accounts
@@ -643,8 +654,16 @@ ipcMain.handle('unite-drive:remove-google-account', async (_event, accountId) =>
     console.error(`[Unite Drive] Could not remove stored credentials for ${account.email}: ${error.message}`)
   }
   syncStore.removeAccount(accountId)
-  await configureSyncService()
-  publishSyncStatus({ status: driveProviders.size ? 'idle' : 'paused', message: `Removed ${account.email}. Its files remain in Google Drive.` })
+  // Reconfigure without waiting for the follow-up sync: it re-routes this
+  // account's files to the remaining drives, and blocking the removal on that
+  // transfer made the "Removing..." dialog look hung. The sync still runs, just
+  // in the background.
+  await configureSyncService({ awaitInitialSync: false })
+  // The background sync owns the status pill from here; only report a status
+  // when sync is actually stopped (e.g. the last account was removed).
+  if (!syncService) {
+    publishSyncStatus({ status: 'paused', message: `Removed ${account.email}. Its files remain in Google Drive.` })
+  }
   return { removed: accountId, email: account.email }
 })
 ipcMain.handle('unite-drive:cancel-operation', (_event, operationId) => {
@@ -832,7 +851,7 @@ function quitApp() {
   app.quit()
 }
 
-async function configureSyncService() {
+async function configureSyncService({ awaitInitialSync = true } = {}) {
   if (syncService) {
     await syncService.stop()
     syncService = null
@@ -848,7 +867,7 @@ async function configureSyncService() {
     rootPath: settings.folderPath,
     onStatus: publishSyncStatus,
   })
-  await syncService.start()
+  await syncService.start({ awaitInitialSync })
   refreshTrayMenu()
 }
 
