@@ -231,6 +231,18 @@ class GoogleDriveProvider {
     await this.drive.files.update({ fileId: driveFileId, requestBody: { trashed: true }, fields: 'id,trashed' })
   }
 
+  // Permanently removes a file (skips Drive trash). Used by a rebalance move once
+  // the replacement copy is safely stored on another account; Drive trash would
+  // keep counting against the quota and defeat the purpose of freeing space.
+  async deleteFile(driveFileId) {
+    try {
+      await this.drive.files.delete({ fileId: driveFileId })
+    } catch (error) {
+      if (Number(error.code ?? error.response?.status) === 404) error.code = 'FILE_NOT_FOUND'
+      throw error
+    }
+  }
+
   async restoreFile(driveFileId) {
     try {
       await this.drive.files.update({ fileId: driveFileId, requestBody: { trashed: false }, fields: 'id,trashed' })

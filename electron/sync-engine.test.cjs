@@ -539,3 +539,75 @@ test('re-uploads when a file is moved and edited at the same time', async () => 
     assert.equal(await fs.promises.readFile(path.join(rootPath, 'renamed.txt'), 'utf8'), 'v2')
   })
 })
+
+async function seedFullAndEmpty() {
+  const full = drive('full', { quotaBytes: 100 })
+  const empty = drive('empty', { quotaBytes: 100 })
+  return { full, empty, providers: [full, empty], localFiles: { 'a.bin': 'a'.repeat(30), 'b.bin': 'b'.repeat(30) } }
+}
+
+test('rebalance previews a plan without queuing or moving anything', async () => {
+  const { full, empty, providers, localFiles } = await seedFullAndEmpty()
+  await withEngine({ localFiles, providers, settings: { storageReservePercent: 0 } }, async ({ engine, store }) => {
+    await engine.syncOnce()
+    const usageBefore = (await full.getQuota()).usageBytes
+
+    const plan = await engine.rebalance({ apply: false })
+
+    assert.equal(plan.applied, false)
+    assert.equal(plan.queued, 0)
+    assert.equal(plan.moves.length, 1)
+    assert.equal(plan.moves[0].fromAccountId, 'full')
+    assert.equal(plan.moves[0].toAccountId, 'empty')
+    assert.equal(store.listOperations().filter((operation) => operation.kind === 'move-remote').length, 0)
+    assert.equal((await full.getQuota()).usageBytes, usageBefore)
+    assert.equal((await empty.listManagedFiles(empty.rootFolderId)).length, 0)
+  })
+})
+
+test('rebalance moves files between drives and permanently deletes the source copy', async () => {
+  const { full, empty, providers, localFiles } = await seedFullAndEmpty()
+  await withEngine({ localFiles, providers, settings: { storageReservePercent: 0 } }, async ({ engine, rootPath, store }) => {
+    await engine.syncOnce()
+
+    const applied = await engine.rebalance({ apply: true })
+    assert.equal(applied.applied, true)
+    assert.equal(applied.queued, 1)
+
+    const result = await engine.syncOnce()
+    assert.equal(result.completed, 1)
+    assert.equal(result.failed, 0)
+
+    const move = applied.moves[0]
+    assert.equal(store.getFile(move.relativePath).account_id, move.toAccountId)
+    assert.equal((await empty.listManagedFiles(empty.rootFolderId)).length, 1)
+    assert.equal((await full.listManagedFiles(full.rootFolderId)).length, 1)
+    // The local copy is untouched by a move, and the next sync is idle.
+    assert.equal((await fs.promises.readFile(path.join(rootPath, ...move.relativePath.split('/')))).length, 30)
+    assert.equal((await engine.syncOnce()).actionsQueued, 0)
+  })
+})
+
+test('rebalance leaves a file that changed after planning on its original drive', async () => {
+  const { full, empty, providers, localFiles } = await seedFullAndEmpty()
+  await withEngine({ localFiles, providers, settings: { storageReservePercent: 0 } }, async ({ engine, rootPath, store }) => {
+    await engine.syncOnce()
+    const applied = await engine.rebalance({ apply: true })
+    const move = applied.moves[0]
+    const filePath = path.join(rootPath, ...move.relativePath.split('/'))
+    await fs.promises.writeFile(filePath, 'edited after the plan was made')
+
+    const first = await engine.syncOnce()
+    assert.equal(first.failed, 0)
+    // The stale move is skipped, so nothing moved to the empty drive yet.
+    assert.equal((await empty.listManagedFiles(empty.rootFolderId)).length, 0)
+    assert.equal(store.getFile(move.relativePath).account_id, move.fromAccountId)
+
+    // The next sync uploads the edit to the file's current (original) drive.
+    await engine.syncOnce()
+    assert.equal(store.getFile(move.relativePath).account_id, move.fromAccountId)
+    assert.equal((await empty.listManagedFiles(empty.rootFolderId)).length, 0)
+    const sourceFiles = await full.listManagedFiles(full.rootFolderId)
+    assert.equal(sourceFiles.some((file) => file.relativePath === move.relativePath && file.size === 'edited after the plan was made'.length), true)
+  })
+})

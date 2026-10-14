@@ -575,6 +575,45 @@ ipcMain.handle('unite-drive:remove-files', async (_event, removals) => {
   })
   return result
 })
+function normalizeRebalanceOptions(value) {
+  const options = { maxBytes: null, maxMoves: null }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return options
+  if (value.maxBytes != null) {
+    const bytes = Number(value.maxBytes)
+    if (!Number.isFinite(bytes) || bytes <= 0) throw new TypeError('Rebalance size cap must be a positive number of bytes')
+    options.maxBytes = Math.floor(bytes)
+  }
+  if (value.maxMoves != null) {
+    const moves = Number(value.maxMoves)
+    if (!Number.isFinite(moves) || moves <= 0) throw new TypeError('Rebalance move cap must be a positive number')
+    options.maxMoves = Math.floor(moves)
+  }
+  return options
+}
+async function runRebalance(apply, rawOptions) {
+  const settings = settingsStore.load()
+  if (!settings.folderPath) {
+    const error = new Error('Choose a local sync folder before rebalancing drives.')
+    error.code = 'SYNC_NOT_CONFIGURED'
+    throw error
+  }
+  const options = normalizeRebalanceOptions(rawOptions)
+  const engine = syncService?.engine ?? createSyncEngine(settings)
+  const result = await engine.rebalance({ apply, ...options })
+  if (apply && result.queued > 0) {
+    // Moves are ordinary queued operations; drain them through the same watcher
+    // (or a one-time pass when sync is paused) so they show up in Transfers.
+    if (syncService) void syncService.syncNow({ retryFailed: true }).catch(() => {})
+    else void createSyncEngine(settings).syncOnce({ retryFailed: true }).catch(() => {})
+    publishSyncStatus({
+      status: syncService ? 'idle' : 'paused',
+      message: `Rebalancing ${result.queued} file${result.queued === 1 ? '' : 's'} between drives.`,
+    })
+  }
+  return result
+}
+ipcMain.handle('unite-drive:get-rebalance-plan', (_event, options) => runRebalance(false, options))
+ipcMain.handle('unite-drive:rebalance-drives', (_event, options) => runRebalance(true, options))
 ipcMain.handle('unite-drive:get-similar-groups', () => {
   const settings = settingsStore.load()
   if (!settings.folderPath) return []

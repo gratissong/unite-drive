@@ -45,6 +45,18 @@ function hashFile(filePath) {
   })
 }
 
+// MD5 in the local byte order, so it can be compared against the `md5Checksum`
+// Google Drive reports for an uploaded file (a cheap end-to-end integrity check).
+function hashFileMd5(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('md5')
+    const input = fs.createReadStream(filePath)
+    input.on('error', reject)
+    input.on('data', (chunk) => hash.update(chunk))
+    input.on('end', () => resolve(hash.digest('hex')))
+  })
+}
+
 async function snapshotFile(rootPath, relativePath) {
   const { root, target, relativePath: normalized } = resolveSafePath(rootPath, relativePath)
   await assertNoSymlinkPath(root, normalized)
@@ -156,4 +168,4 @@ async function moveLocalPathToTrash(rootPath, relativePath, trashItem) {
   return true
 }
 
-module.exports = { assertNoSymlinkPath, hashFile, ignoredNames, moveLocalFileToTrash, moveLocalPathToTrash, resolveSafePath, scanSyncRoot, snapshotFile, writeStreamAtomically, writeStreamIfAbsent }
+module.exports = { assertNoSymlinkPath, hashFile, hashFileMd5, ignoredNames, moveLocalFileToTrash, moveLocalPathToTrash, resolveSafePath, scanSyncRoot, snapshotFile, writeStreamAtomically, writeStreamIfAbsent }
