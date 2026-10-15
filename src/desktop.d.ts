@@ -14,6 +14,7 @@ type SyncSettings = {
   preferredAccountId: string | null
   launchAtLogin: boolean
   autoUpdateCheck: boolean
+  syncIntervalMinutes: number
 }
 
 type DriveAccountInfo = {

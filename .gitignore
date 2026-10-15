@@ -18,6 +18,9 @@ release
 .env.*
 !.env.example
 
+# Local notes (not committed)
+FEATURE_IDEAS.md
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

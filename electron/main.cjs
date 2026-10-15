@@ -716,9 +716,15 @@ ipcMain.handle('unite-drive:update-sync-settings', async (_event, patch) => {
   }
   if (Object.hasOwn(patch, 'launchAtLogin') && typeof patch.launchAtLogin !== 'boolean') throw new TypeError('Invalid launch at login setting')
   if (Object.hasOwn(patch, 'autoUpdateCheck') && typeof patch.autoUpdateCheck !== 'boolean') throw new TypeError('Invalid automatic update setting')
+  if (Object.hasOwn(patch, 'syncIntervalMinutes') && (!Number.isInteger(patch.syncIntervalMinutes) || patch.syncIntervalMinutes < 1 || patch.syncIntervalMinutes > 120)) {
+    throw new TypeError('Sync interval must be a whole number between 1 and 120 minutes')
+  }
   const settings = settingsStore.update(patch)
   if (Object.hasOwn(patch, 'launchAtLogin')) applyLaunchAtLogin()
   if (Object.hasOwn(patch, 'autoUpdateCheck')) updateService?.setAutoCheck(settings.autoUpdateCheck)
+  if (Object.hasOwn(patch, 'syncIntervalMinutes') && syncService) {
+    syncService.setRemotePollMs(settings.syncIntervalMinutes * 60_000)
+  }
   try {
     await configureSyncService()
   } catch (error) {
@@ -868,6 +874,7 @@ async function configureSyncService({ awaitInitialSync = true } = {}) {
   syncService = new SyncService(engine, {
     rootPath: settings.folderPath,
     onStatus: publishSyncStatus,
+    remotePollMs: settings.syncIntervalMinutes * 60_000,
   })
   await syncService.start({ awaitInitialSync })
   refreshTrayMenu()
